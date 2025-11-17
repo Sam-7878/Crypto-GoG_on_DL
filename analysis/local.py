@@ -11,30 +11,80 @@ from collections import Counter
 import warnings
 warnings.filterwarnings("ignore")
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN
+
+
+def _normalize_columns(df: pd.DataFrame, chain_name: str) -> pd.DataFrame:
+    cols = {c.lower(): c for c in df.columns}
+    # class 후보를 폭넓게 탐색
+    cand_keys = ['class', 'class_x', 'class_y',
+                 'label', 'label_x', 'label_y',
+                 'category', 'classes']
+    src_key = next((k for k in cand_keys if k in cols), None)
+    if src_key:
+        src_col = cols[src_key]
+        if src_col != 'Class':
+            df = df.rename(columns={src_col: 'Class'})
+    if 'Class' not in df.columns:
+        df['Class'] = 'Unknown'
+
+    # Chain 처리도 필요하면 여기 유지
+    chain_keys = ['chain', 'network', 'net']
+    chain_key = next((k for k in chain_keys if k in cols), None)
+    if chain_key:
+        df = df.rename(columns={cols[chain_key]: 'Chain'})
+    if 'Chain' not in df.columns:
+        df['Chain'] = chain_name
+    return df
+
 
 # read in files include local graph properties
-polygon_graphs = pd.merge(pd.read_csv('../result/polygon_basic_metrics.csv'),\
-                        pd.read_csv('../result/polygon_advanced_metrics_labels.csv'), 
-                        on = 'Contract') 
+# 1) 원본 CSV 읽기
+poly_basic   = pd.read_csv('./result/polygon_basic_metrics.csv')
+poly_labels  = pd.read_csv('./result/polygon_advanced_metrics_labels.csv')
+eth_basic    = pd.read_csv('./result/ethereum_basic_metrics.csv')
+eth_labels   = pd.read_csv('./result/ethereum_advanced_metrics_labels.csv')
+bnb_basic    = pd.read_csv('./result/bnb_basic_metrics.csv')
+bnb_labels   = pd.read_csv('./result/bnb_advanced_metrics_labels.csv')
 
-ethereum_graphs = pd.merge(pd.read_csv('../result/ethereum_basic_metrics.csv'),\
-                        pd.read_csv('../result/ethereum_advanced_metrics_labels.csv'), 
-                        on = 'Contract')
+# 2) 라벨 쪽에 먼저 표준화 적용 (Class, Chain 이름 맞추기)
+poly_labels = _normalize_columns(poly_labels, 'Polygon')
+eth_labels  = _normalize_columns(eth_labels,  'Ethereum')
+bnb_labels  = _normalize_columns(bnb_labels,  'BNB')
 
+# 3) basic + labels merge
+polygon_graphs  = pd.merge(poly_basic, poly_labels, on='Contract')
+ethereum_graphs = pd.merge(eth_basic,  eth_labels,  on='Contract')
+bnb_graphs      = pd.merge(bnb_basic,  bnb_labels,  on='Contract')
 
-bnb_graphs =  pd.merge(pd.read_csv('../result/bnb_basic_metrics.csv'),\
-                        pd.read_csv('../result/bnb_advanced_metrics_labels.csv'), 
-                        on = 'Contract')
+# 4) 이제는 merge 후에 다시 _normalize_columns 호출할 필요 없음
+#    (아래 세 줄은 삭제 또는 주석 처리)
+# bnb_graphs      = _normalize_columns(bnb_graphs,      'bnb')
+# ethereum_graphs = _normalize_columns(ethereum_graphs, 'ethereum')
+# polygon_graphs  = _normalize_columns(polygon_graphs,  'polygon')
 
-
-plt.rcParams.update({'font.size': 20})
-
-
-graphs = bnb_graphs.append(ethereum_graphs)
-graphs = graphs.append(polygon_graphs)
+# 5) concat
+graphs = pd.concat([bnb_graphs, ethereum_graphs, polygon_graphs], ignore_index=True)
 
 
 filtered_graph = graphs[['Contract', 'Chain', 'Class']]
+
+print("BNB cols:", bnb_graphs.columns.tolist())
+print("ETH cols:", ethereum_graphs.columns.tolist())
+print("POLY cols:", polygon_graphs.columns.tolist())
+
+print("graphs rows:", len(graphs))
+# print("labels rows:", len(labels))
+# print("merged rows:", len(merged))
+# print("Class value counts:\n", merged['Class'].value_counts(dropna=False).head())
+# print("Chains in merged:", merged['Chain'].dropna().str.lower().value_counts().to_dict())
+
 
 class_counts = filtered_graph['Class'].value_counts().reset_index()
 class_counts.columns = ['Class', 'Counts']

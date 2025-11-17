@@ -8,18 +8,28 @@ import numpy as np
 import random
 from scipy.stats import pearsonr
 from tqdm import tqdm
+from networkx.algorithms import approximation as approx
 
 import warnings
 warnings.filterwarnings("ignore")
 
 
-chain = 'polygon'
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 
-# read in labels file
-chain_labels = pd.read_csv(f'../data/labels.csv').query('Chain == @chain')
+# chain = 'polygon'
+print("Using chain:", CHAIN)   
+chain = CHAIN
+chain_labels = CHAIN_LABELS
 chain_class = dict(zip(chain_labels.Contract, chain_labels.Category))
 
-global_link = pd.read_csv(f'../graphs/{chain}/{chain}_common_nodes_except_null_labels.csv') 
+
+global_link = pd.read_csv(f'./graphs/{chain}/{chain}_common_nodes_except_null_labels.csv') 
 
 global_link['Class1'] = global_link['Contract1'].map(chain_class)
 global_link['Class2'] = global_link['Contract2'].map(chain_class)
@@ -53,7 +63,7 @@ node_set = set(nodes)
 number_of_transactions = {}
 for addr in tqdm(chain_class):
     try:
-        tx = pd.read_csv(f'../data/transactions/{chain}/{addr}.csv')
+        tx = pd.read_csv(f'./data/transactions/{chain}/{addr}.csv')
         tx['timestamp'] = pd.to_datetime(tx['timestamp'], unit='s')
         end_date = pd.Timestamp('2024-03-01')
         tx = tx[tx['timestamp'] < end_date]
@@ -76,18 +86,34 @@ def approximate_average_shortest_path_length(G, num_landmarks=10):
 
     return total_path_length / total_paths if total_paths > 0 else None
 
-def calculate_effective_diameter(G, percentile=90):
-    path_lengths = []
+## Effective Diameter 계산 함수
+# 기존 합수가 너무 오래 걸려서 일부 노드만 샘플링해 근사 계산하도록 수정
+def calculate_effective_diameter(G, percentile=90, num_sources=30):
+    """
+    Effective diameter를 모든 노드가 아니라,
+    무작위로 뽑은 일부 source 노드들만 사용해 근사 계산.
+    """
     nodes = list(G.nodes())
-
-    for node in nodes:
-        lengths = nx.single_source_shortest_path_length(G, node)
-        path_lengths.extend(lengths.values())
-
-    if path_lengths:
-        return np.percentile(path_lengths, percentile)
-    else:
+    if not nodes:
         return None
+
+    # 노드 수가 많으면 일부만 샘플링
+    if len(nodes) > num_sources:
+        sources = random.sample(nodes, num_sources)
+    else:
+        sources = nodes
+
+    path_lengths = []
+
+    for s in sources:
+        lengths = nx.single_source_shortest_path_length(G, s)
+        # 자기 자신(거리 0)은 제외
+        path_lengths.extend(d for d in lengths.values() if d > 0)
+
+    if not path_lengths:
+        return None
+
+    return np.percentile(path_lengths, percentile)
 
 
 num_nodes = global_graph.number_of_nodes()
@@ -114,12 +140,21 @@ print("Reciprocity:", reciprocity)
 average_shortest_path_length = approximate_average_shortest_path_length(global_graph)
 print("Average Shortest Path Length:", average_shortest_path_length)
 
-effective_diameter = calculate_effective_diameter(global_graph)
+# Effective Diameter 계산 (근사), 너무 오래 걸려서 일부 노드만 샘플링
+effective_diameter = calculate_effective_diameter(global_graph, percentile=90, num_sources=30)
 print("Effective Diameter:", effective_diameter)
 
+## Approximate Clustering Coefficient 계산
 if num_nodes > 0:
-    clustering_coefficient = nx.average_clustering(global_graph.to_undirected())
-    print("Clustering Coefficient:", clustering_coefficient)
+    undirected = global_graph.to_undirected()
+
+    # 샘플 수는 상황에 맞게 조정 (200~1000 사이 권장)
+    clustering_coefficient = approx.average_clustering(
+        undirected,
+        trials=300,
+        seed=42,
+    )
+    print("Approx. Clustering Coefficient:", clustering_coefficient)
 else:
     print("Clustering Coefficient: Not applicable")
 

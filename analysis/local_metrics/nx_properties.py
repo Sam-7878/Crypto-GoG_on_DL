@@ -6,6 +6,14 @@ import os
 import numpy as np
 import json
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+# ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
+
 random.seed(1)
 
 def calculate_stats(tx, end_date):
@@ -22,18 +30,20 @@ def calculate_stats(tx, end_date):
     return num_nodes, num_edges, density, assortativity, reciprocity
 
 def main():
-    chain = 'polygon'
-
-    chain_labels = pd.read_csv(f'../../data/labels.csv').query('Chain == @chain')
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+    chain_labels = CHAIN_LABELS
     chain_class = list(chain_labels.Contract.values)
 
-    output_file = '../../result/'
+
+    output_file = './result/'
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
     stats = []
     for addr in tqdm(chain_class):
         try:
-            tx = pd.read_csv(f'../../data/transactions/{chain}/{addr}.csv')
+            tx = pd.read_csv(f'./data/transactions/{chain}/{addr}.csv')
             tx['timestamp'] = pd.to_datetime(tx['timestamp'], unit='s')
             end_date = pd.Timestamp('2024-03-01')
             num_nodes, num_edges, density, assortativity, reciprocity = calculate_stats(tx, end_date)
@@ -49,7 +59,7 @@ def main():
         except Exception as e:
             print(f'Error for address {addr}: {e}')
     
-    pd.DataFrame(stats).to_csv(f'../../result/{chain}_basic_metrics.csv', index=False)
+    pd.DataFrame(stats).to_csv(f'./result/{chain}_basic_metrics.csv', index=False)
 
 if __name__ == "__main__":
     main()

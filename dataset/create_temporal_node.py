@@ -4,26 +4,34 @@ import random
 import torch
 import os
     
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 
 def main():
-    chain = 'polygon'
-
-    labels = pd.read_csv('../data/labels.csv').query('Chain == @chain')
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+    chain_labels = CHAIN_LABELS
 
     # Use three-class as an example.
     n = 3
-    category_counts = labels['Category'].value_counts()
+    category_counts = chain_labels['Category'].value_counts()
     select_class = list(category_counts.head(n).index)
     category_to_label = {category: i for i, category in enumerate(select_class)}
-    labels['Category'] = labels['Category'].map(category_to_label)
+    chain_labels['Category'] = chain_labels['Category'].map(category_to_label)
 
-    labels_select = list(labels.query('Category < @n').Category.values)
-    labels_select_df = labels.query('Category < @n').reset_index(drop = True)
+    labels_select = list(chain_labels.query('Category < @n').Category.values)
+    labels_select_df = chain_labels.query('Category < @n').reset_index(drop = True)
 
     # create timestamps
     stats = []
     for addr in labels_select_df.Contract.values:
-        tx = pd.read_csv(f'../data/transactions/{chain}/{addr}.csv')
+        tx = pd.read_csv(f'./data/transactions/{chain}/{addr}.csv')
         first_timestamp = tx['timestamp'].min()
         stats.append({'address': addr, 'first_timestamp': first_timestamp})
         
@@ -42,12 +50,12 @@ def main():
     train_index = list(timestamps['addr_index'].values)[:train_num]
     test_index = list(timestamps['addr_index'].values)[train_num:]
 
-    file_name = f'../GoG/node/{chain}_train_index_{n}.txt'
+    file_name = f'./GoG/node/{chain}_train_index_{n}.txt'
     with open(file_name, 'w') as file:
         for item in train_index:
             file.write(f"{item}\n")
 
-    file_name = f'../GoG/node/{chain}_test_index_{n}.txt'
+    file_name = f'./GoG/node/{chain}_test_index_{n}.txt'
     with open(file_name, 'w') as file:
         for item in test_index:
             file.write(f"{item}\n")

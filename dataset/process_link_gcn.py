@@ -1,9 +1,19 @@
 import pandas as pd
 import torch
+import pickle   ## pytorch 2.6 compatibility
+import numpy as np
+from torch.utils.data import Dataset
 from torch_scatter import scatter_add
 from torch_geometric.data import InMemoryDataset, Data
 import os
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import CHAIN
 class TransactionEdgeDataset(InMemoryDataset):
     def __init__(self, root, transform=None, pre_transform=None, chain='polygon', use_train=True):
         self.chain = chain
@@ -40,7 +50,9 @@ class TransactionEdgeDataset(InMemoryDataset):
 
     def load_data(self):
         data_path = self.processed_paths[0] if self.use_train else self.processed_paths[1]
-        self.data = torch.load(data_path) if os.path.exists(data_path) else None
+        ## replace by su.
+        # weights_only=True (default) in torch 2.6 causes issues when loading Data objects with non-tensor attributes
+        self.data = torch.load(data_path, weights_only=False) if os.path.exists(data_path) else None
 
     def prepare_node_features(self, df):
         num_nodes = df[['node1', 'node2']].max().max() + 1
@@ -73,9 +85,11 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    chain = 'polygon'
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
     
-    root_path = f'../GoG/edges/{chain}'
+    root_path = f'./GoG/edges/{chain}'
 
     train_data = TransactionEdgeDataset(root=root_path, chain=chain, use_train=True)
     test_data = TransactionEdgeDataset(root=root_path, chain=chain, use_train=False)

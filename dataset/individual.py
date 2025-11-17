@@ -6,6 +6,14 @@ import torch
 from torch_geometric.data import InMemoryDataset
 import os
 from torch_geometric.data import Data
+from pathlib import Path
+import sys
+
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -23,10 +31,15 @@ class TransactionDataset(InMemoryDataset):
         return 'data.pt'
 
     def process(self):
-        data_list = [self.graph_to_data_object(self.create_graph(df), label, contract) 
-                     for df, label, contract in zip(self.transaction_dfs, self.labels, self.contract_addresses)]
+        data_list = []
+        for df, label, contract in zip(self.transaction_dfs, self.labels, self.contract_addresses):
+            data = self.graph_to_data_object(self.create_graph(df), label, contract)
+            if data is not None:
+                data_list.append(data)
+
         data, slices = self.collate(data_list)
         torch.save((data, slices), self.processed_paths[0])
+
 
     def create_graph(self, transaction_df):
         # Normalize transaction values
@@ -66,18 +79,30 @@ class TransactionDataset(InMemoryDataset):
 
         x = torch.tensor([[td, ind, outd, inv, outv] for td, ind, outd, inv, outv in zip(total_degree, in_degree, out_degree, in_value, out_value)], dtype=torch.float)
 
+        # Graph-level attributes
+        # Calculate min, max, average timestamps
         timestamps = [data['timestamp'] for _, _, data in graph.edges(data=True)]
         if timestamps:
             min_timestamp, max_timestamp = min(timestamps), max(timestamps)
             average_timestamp = sum(timestamps) / len(timestamps)
         else:
-            min_timestamp = max_timestamp = average_timestamp = 0  
+            min_timestamp = max_timestamp = average_timestamp = 0
 
-        chain_index = chain_indexes.get(self.chain, None)
-        contract_index = all_address_index.get(contract_address, None)
+        chain_index = chain_indexes.get(self.chain)
+        if chain_index is None:
+            raise ValueError(f"Unknown chain name: {self.chain}. "
+                            f"Check chain_indexes mapping.")
 
-        graph_attr = torch.tensor([min_timestamp, max_timestamp, average_timestamp, 
-                                   chain_index, contract_index], dtype=torch.float)
+        contract_index = all_address_index.get(contract_address)
+        if contract_index is None:
+            raise ValueError(f"Contract {contract_address} not found in all_address_index.")
+
+        graph_attr = torch.tensor(
+            [min_timestamp, max_timestamp, average_timestamp,
+            float(chain_index), float(contract_index)],
+            dtype=torch.float,
+        )
+
 
         y = torch.tensor([label], dtype=torch.long)
 
@@ -89,8 +114,11 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    chain = 'polygon'
-    labels = pd.read_csv('../data/labels.csv').query('Chain == @chain')
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+    # labels = pd.read_csv('./data/labels.csv').query('Chain == @chain')
+    labels = CHAIN_LABELS
 
     # Use three-class as an example.
     n = 3
@@ -106,15 +134,20 @@ if __name__ == "__main__":
     # read in transaction data
     transaction_dfs_select = []
     for i in tqdm(labels_select_df.Contract.values):
-        tx = pd.read_csv(f'../data/transactions/{chain}/{i}.csv')
+        tx = pd.read_csv(f'./data/transactions/{chain}/{i}.csv')
         tx['date'] = pd.to_datetime(tx['timestamp'], unit='s')
         transaction_dfs_select.append(tx)
 
-    chain_indexes = {'ethereum': 1, 'polygon': 2, 'bsc': 3}
+    chain_indexes = {
+        'ethereum': 1, 
+        'polygon': 2, 
+        'bsc': 3,
+        'bnb': 3,     # 혹시 settings 에서 bsc 로 쓸 때도 같이 커버
+   }
 
     all_address_index = dict(zip(labels_select_df.Contract, labels_select_df.index))
     
-    dataset = TransactionDataset(root=f'../data/GCN/{chain}', 
+    dataset = TransactionDataset(root=f'./data/GCN/{chain}', 
                                 transaction_dfs=transaction_dfs_select, 
                                 labels=list(labels_select_df.Category.values),
                                 contract_addresses=list(labels_select_df.Contract.values),

@@ -11,6 +11,14 @@ from sklearn.model_selection import train_test_split
 from sklearn.impute import SimpleImputer
 from utils import GraphDatasetGenerator
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+# ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
+
 def eval_roc_auc(label, score):
     roc_auc = roc_auc_score(y_true=label, y_score=score)
     if roc_auc < 0.5:
@@ -50,8 +58,11 @@ def evaluate_model_with_seeds(model, best_params, x, y, seeds):
     return np.mean(auc_results), np.std(auc_results), np.mean(ap_results), np.std(ap_results)
 
 def main():
-    chain = 'polygon'
-    dataset_generator = GraphDatasetGenerator(f'../../data/features/{chain}_basic_metrics_processed.csv')
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+
+    dataset_generator = GraphDatasetGenerator(f'./../data/features/{chain}_basic_metrics_processed.csv')
     data_list = dataset_generator.get_pyg_data_list()
     x = torch.cat([data.x for data in data_list], dim=0).numpy()
     y = torch.cat([data.y.unsqueeze(0) if data.y.dim() == 0 else data.y for data in data_list]).numpy()

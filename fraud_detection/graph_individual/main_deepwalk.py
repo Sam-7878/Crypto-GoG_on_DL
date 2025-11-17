@@ -10,6 +10,14 @@ from pyod.models.vae import VAE
 from pygod.metric import eval_roc_auc
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+# ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
+
 def eval_roc_auc(label, score):
     roc_auc = roc_auc_score(y_true=label, y_score=score)
     if roc_auc < 0.5:
@@ -60,12 +68,14 @@ def load_labels(filepath, column_name='label'):
         exit()
 
 def main():
-    chain = 'polygon'
-    filepath = f'../data/features/{chain}_basic_metrics_processed.csv'
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+    filepath = f'./data/features/{chain}_basic_metrics_processed.csv'
     y = load_labels(filepath)
     
     graph_embeddings = []
-    embedding_path = f'../../data/Deepwalk/{chain}'
+    embedding_path = f'./../data/Deepwalk/{chain}'
     
     processed_graphs = 0
     

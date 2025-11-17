@@ -10,6 +10,14 @@ import os
 import pandas as pd
 import random
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+# ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
+
 def create_masks(num_nodes):
     indices = np.arange(num_nodes)
     np.random.shuffle(indices)
@@ -85,12 +93,15 @@ def load_labels(filepath, column_name='label'):
 
 def main():
     args = parameter_parser()
-    chain = 'polygon'
-    filepath = f'../data/features/{chain}_basic_metrics_processed.csv'
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+
+    filepath = f'./data/features/{chain}_basic_metrics_processed.csv'
     y = load_labels(filepath)
     
     graph_embeddings = []
-    embedding_path = f'../../data/Deepwalk/{chain}'
+    embedding_path = f'./../data/Deepwalk/{chain}'
 
     processed_graphs = 0
     
@@ -110,7 +121,7 @@ def main():
 
     x = torch.cat(graph_embeddings, dim=0)
 
-    hierarchical_graph = hierarchical_graph_reader(f'../../GoG/{chain}/edges/global_edges.csv')
+    hierarchical_graph = hierarchical_graph_reader(f'./../GoG/{chain}/edges/global_edges.csv')
     edge_index = torch.LongTensor(list(hierarchical_graph.edges)).t().contiguous()
 
     global_data = Data(x=x, edge_index=edge_index, y=y)

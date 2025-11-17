@@ -6,6 +6,13 @@ from tqdm import tqdm
 import torch
 import pandas as pd
 
+from pathlib import Path
+import sys
+# 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+ROOT = Path(__file__).resolve().parent
+# ROOT = Path(__file__).resolve().parent.parent
+sys.path.append(str(ROOT))
+from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 
 class JSONEncoderWithNumpy(json.JSONEncoder):
     def default(self, obj):
@@ -73,38 +80,40 @@ if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
-    chain = 'polygon'
-    labels = pd.read_csv('../data/labels.csv').query('Chain == @chain').reset_index(drop=True)
+    # chain = 'polygon'
+    print("Using chain:", CHAIN)   
+    chain = CHAIN
+    chain_labels = CHAIN_LABELS.reset_index(drop=True)
 
     ### Use three-class as an example.
     n = 3
-    category_counts = labels['Category'].value_counts()
+    category_counts = chain_labels['Category'].value_counts()
     select_class = list(category_counts.head(n).index)
     category_to_label = {category: i for i, category in enumerate(select_class)}
-    labels['Category'] = labels['Category'].map(category_to_label)
-    select_address = list(labels.query('Category in @select_class').Contract.values)
+    chain_labels['Category'] = chain_labels['Category'].map(category_to_label)
+    select_address = list(chain_labels.query('Category in @select_class').Contract.values)
 
     # read in full global_graph
-    contract_mapping_file = f'../data/global_graph/{chain}_contract_to_number_mapping.json'
+    contract_mapping_file = f'./data/global_graph/{chain}_contract_to_number_mapping.json'
     contract_to_number = load_contract_mapping(contract_mapping_file)
     number_to_contract = {v: k for k, v in contract_to_number.items()}
-    global_graph = pd.read_csv(f'../data/global_graph/{chain}_graph_more_than_1_ratio.csv') 
+    global_graph = pd.read_csv(f'./data/global_graph/{chain}_graph_more_than_1_ratio.csv') 
 
     global_graph['Contract1'] = global_graph['Contract1'].apply(lambda x: number_to_contract[x])
     global_graph['Contract2'] = global_graph['Contract2'].apply(lambda x: number_to_contract[x])
-    labels_select = list(labels.query('Category < @n').Category.values)
-    labels_select_df = labels.query('Category < @n').reset_index(drop = True)
+    labels_select = list(chain_labels.query('Category < @n').Category.values)
+    labels_select_df = chain_labels.query('Category < @n').reset_index(drop = True)
     global_graph_select = global_graph.query('Contract1 in @select_address and Contract2 in @select_address')
     print(labels_select_df.Category.max())
     
     # read in transaction data
     transaction_dfs_select = []
     for i in tqdm(labels_select_df.Contract.values):
-        tx = pd.read_csv(f'../data/transactions/{chain}/{i}.csv')
+        tx = pd.read_csv(f'./data/transactions/{chain}/{i}.csv')
         tx['date'] = pd.to_datetime(tx['timestamp'], unit='s')
         transaction_dfs_select.append(tx)
 
-    directory = f'../GoG/{chain}'
+    directory = f'./GoG/{chain}'
     for idx, (df, label) in enumerate(zip(transaction_dfs_select, labels_select)):
         save_transaction_graph(df, label, idx, directory)
 
@@ -113,8 +122,8 @@ if __name__ == "__main__":
     global_graph_select['graph_1'] = global_graph_select['Contract1'].apply(lambda x: int(all_address_index[x]))
     global_graph_select['graph_2'] = global_graph_select['Contract2'].apply(lambda x: int(all_address_index[x]))
 
-    os.makedirs(f'../GoG/{chain}/edges/', exist_ok=True)
-    global_graph_select[['graph_1', 'graph_2']].to_csv(f'../GoG/{chain}/edges/global_edges.csv', index = 0)
+    os.makedirs(f'./GoG/{chain}/edges/', exist_ok=True)
+    global_graph_select[['graph_1', 'graph_2']].to_csv(f'./GoG/{chain}/edges/global_edges.csv', index = 0)
     
     
 

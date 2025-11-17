@@ -1,0 +1,34 @@
+# Merge artifacts
+*.orig
+build/
+xbuild/
+_res/
+.venv/
+
+# Python bytecode
+**/__pycache__/
+
+
+# Graph database files
+data/
+doc/
+GoG/    
+result/
+graphs/
+
+# test folders
+test_01/
+test_02/
+test_03/
+
+# intermediate data files
+*.csv
+
+# Text files
+*.txt 
+*.log
+*.md
+*.png 
+
+# notes.
+Crypto-GoG_on_DL_notes.txt
