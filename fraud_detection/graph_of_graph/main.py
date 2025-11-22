@@ -5,7 +5,7 @@ from pygod.detector import DOMINANT, DONE, GAE, AnomalyDAE, CoLA
 from pygod.metric import eval_roc_auc
 from torch_geometric.data import Data
 from sklearn.metrics import roc_auc_score, average_precision_score
-from utils import hierarchical_graph_reader, GraphDatasetGenerator
+from fraud_detection.graph_of_graph.utils import hierarchical_graph_reader, GraphDatasetGenerator
 
 from pathlib import Path
 import sys
@@ -17,7 +17,7 @@ from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 
 class Args:
     def __init__(self):
-        self.device = 'cuda:1'  
+        self.device = 'cuda:0' # 'cpu' or 'cuda:1' 
 
 def create_masks(num_nodes):
     indices = np.arange(num_nodes)
@@ -63,8 +63,10 @@ def run_model(detector, data, seeds):
 
     return np.mean(auc_scores), np.std(auc_scores), np.mean(ap_scores), np.std(ap_scores)
 
+
 def main():
-    args = Args()
+    args = Args(gpu=0)  # 또는 그냥 Args()로 두고 기본값 0 사용
+
     # chain = 'polygon'
     print("Using chain:", CHAIN)   
     chain = CHAIN
@@ -73,7 +75,7 @@ def main():
     data_list = dataset_generator.get_pyg_data_list()
 
     x = torch.cat([data.x for data in data_list], dim=0)
-    hierarchical_graph = hierarchical_graph_reader(f'./../GoG/{chain}/edges/global_edges.csv')
+    hierarchical_graph = hierarchical_graph_reader(f'./GoG/{chain}/edges/global_edges.csv')
     edge_index = torch.LongTensor(list(hierarchical_graph.edges)).t().contiguous()
     global_data = Data(x=x, edge_index=edge_index, y=dataset_generator.target)
     
