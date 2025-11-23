@@ -46,12 +46,12 @@ def _normalize_columns(df: pd.DataFrame, chain_name: str) -> pd.DataFrame:
 
 # read in files include local graph properties
 # 1) 원본 CSV 읽기
-poly_basic   = pd.read_csv('./result/polygon_basic_metrics.csv')
-poly_labels  = pd.read_csv('./result/polygon_advanced_metrics_labels.csv')
-eth_basic    = pd.read_csv('./result/ethereum_basic_metrics.csv')
-eth_labels   = pd.read_csv('./result/ethereum_advanced_metrics_labels.csv')
-bnb_basic    = pd.read_csv('./result/bnb_basic_metrics.csv')
-bnb_labels   = pd.read_csv('./result/bnb_advanced_metrics_labels.csv')
+poly_basic   = pd.read_csv('./results/polygon_basic_metrics.csv')
+poly_labels  = pd.read_csv('./results/polygon_advanced_metrics_labels.csv')
+eth_basic    = pd.read_csv('./results/ethereum_basic_metrics.csv')
+eth_labels   = pd.read_csv('./results/ethereum_advanced_metrics_labels.csv')
+bnb_basic    = pd.read_csv('./results/bnb_basic_metrics.csv')
+bnb_labels   = pd.read_csv('./results/bnb_advanced_metrics_labels.csv')
 
 # 2) 라벨 쪽에 먼저 표준화 적용 (Class, Chain 이름 맞추기)
 poly_labels = _normalize_columns(poly_labels, 'Polygon')

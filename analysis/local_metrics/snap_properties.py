@@ -134,7 +134,7 @@ def main():
     chain_labels = CHAIN_LABELS
     chain_class = list(chain_labels.Contract.values)
 
-    output_file = './result/'
+    output_file = './results/'
     os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
 
@@ -158,7 +158,7 @@ def main():
             print(f'Error for address {addr}: {e}')
 
     df = pd.DataFrame(stats)
-    df.to_csv(f'./result/{chain}_advanced_metrics_labels.csv', index=False)
+    df.to_csv(f'./results/{chain}_advanced_metrics_labels.csv', index=False)
 
 if __name__ == "__main__":
     main()

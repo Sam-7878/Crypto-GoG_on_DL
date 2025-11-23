@@ -16,8 +16,8 @@ def main():
     chain = CHAIN
     chain_labels = CHAIN_LABELS
 
-    graphs1 = pd.read_csv(f'./result/{chain}_basic_metrics.csv')
-    graphs2 = pd.read_csv(f'./result/{chain}_advanced_metrics_labels.csv')
+    graphs1 = pd.read_csv(f'./results/{chain}_basic_metrics.csv')
+    graphs2 = pd.read_csv(f'./results/{chain}_advanced_metrics_labels.csv')
     
     features = pd.merge(graphs1, graphs2, on='Contract')
     
