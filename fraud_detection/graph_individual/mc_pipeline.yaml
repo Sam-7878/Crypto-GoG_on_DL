@@ -1,0 +1,156 @@
+project:
+  name: "gog-mc-fraud"
+  timezone: "Asia/Seoul"
+  random_seed: 1729
+  run_mode: "stream"         # stream | batch
+  chains: ["bsc", "ethereum", "polygon"]
+
+data:
+  # 토큰-로컬그래프 빌드 입력
+  input:
+    tx_source: "parquet"     # parquet | kafka | bigquery
+    tx_schema: ["chain", "ts", "from", "to", "token", "amount", "txhash", "block"]
+    address_normalization: true
+    time_bucket_minutes: 5
+  # 윈도 관리
+  windows:
+    local_metrics_minutes: 60      # 로컬 모티프/상호성 추정용
+    overlap_days: 7                # 토큰 간 오버랩 추정용
+    temporal_step_minutes: 30      # SMC 업데이트 주기
+    rwr_refresh_minutes: 60        # 글로벌 위험 전파 갱신 주기
+  # 필터
+  filters:
+    min_tx_per_token: 200
+    min_unique_addr_per_token: 50
+    stablecoin_symbols: ["USDT", "USDC", "DAI"]   # (선택) 스테이블코인 별도 취급
+
+local_mc:  # 토큰 내부(로컬) MC 추정
+  sampling:
+    wedge_samples_min: 2000
+    wedge_samples_per_edge: 5
+    wedge_samples_max: 100000
+    triad_samples: 20000          # 3-node motif
+    tetrad_samples: 5000          # 4-node motif (E가 작으면 자동 축소)
+    reciprocity_edge_samples: 10000
+    adaptive: true                # 분산추정 기반 적응 샘플 수 조정
+    ci_target_halfwidth: 0.05     # 95% CI half-width 목표(비율 지표 기준)
+  metrics:
+    compute: ["clustering_coeff", "reciprocity", "star_in", "star_out", "2cycle", "3cycle"]
+  null_model:                      # 널 모델에서의 놀람도(p-value) 계산
+    type: "chung_lu"               # chung_lu | dc_sbm
+    replicas_base: 50
+    replicas_max: 200
+    edge_swaps_per_replica_factor: 10   # replica당 E*factor 스왑
+    burn_in_swaps_factor: 2             # 초기 burn-in E*factor
+    keep_empirical_zscore: true
+
+global_overlap:  # 토큰 간 오버랩 기반 GoG 간선
+  candidate:
+    minhash_k: 128
+    lsh_bands: 32
+    lsh_rows_per_band: 4
+    topk_per_token: 100
+  exact_eval:
+    method: "hypergeometric"      # | "poisson_approx" | "mc_importance"
+    mc_samples: 100000            # (mc_importance 선택 시)
+    p_value_thresh: 1.0e-4
+    weight: "-log10_p"            # 간선 가중치 = -log10(p)
+    weight_clip: [0.0, 10.0]
+  pruning:
+    keep_only_significant: true
+    max_edges_per_token: 500
+
+rwr:  # MC-RWR(개인화 랜덤워크) 위험 전파
+  seeds:
+    source: "labeled_illicit_tokens"  # 사기/피싱/러그풀 확정·강의심 목록
+    min_seed_count: 50
+  walk:
+    alpha: 0.20                # 재시작 확률
+    length: 12                 # 워크 길이(스텝)
+    walks_per_seed: 2000
+    neighbor_weight_power: 0.5 # 이웃 선택 시 (weight^gamma)
+  estimation:
+    bootstrap_B: 200
+    output_ci: true
+
+temporal_smc:  # 시계열 SMC(입자 필터)
+  state:
+    type: "binary"             # 정상(0)/이상(1) 또는 "continuous"
+    p00: 0.98                  # 정상 유지 확률
+    p11: 0.90                  # 이상 유지 확률
+  particles:
+    N_default: 300
+    N_hot: 800                 # 최근 플래그 토큰에 상향
+    ess_resample_ratio: 0.5    # ESS/N < 0.5 에서 리샘플
+    resampling_method: "stratified"
+  observations:
+    features: ["d_volume_z", "d_unique_addr_z", "local_zmax", "d_rwr_score"]
+    standardize: true
+    likelihood: "student_t"
+    dof: 5
+    abnormal_mean_shift: 2.0
+    abnormal_var_scale: 1.5
+
+fusion:  # 스코어 융합
+  mode: "supervised_if_available"    # | unsupervised
+  weights:                           # (라벨 없을 때 가중합)
+    local: 0.40
+    global: 0.35
+    temporal: 0.25
+  supervised_model: "logistic_l2"    # 라벨 있으면 간단히 로지스틱 회귀
+  calibration: "isotonic"            # Platt/Isotonic (체인별)
+
+thresholds:
+  unsupervised:
+    fisher_p_global: 1.0e-4          # local p들과 link p를 피셔결합
+    local_zmax_min: 2.5
+    rwr_ci_low_min: 0.02
+    trigger_logic: "(fisher_p_global<=1e-4) AND (local_zmax>=2.5 OR rwr_ci_low>=0.02)"
+  supervised:
+    score_cutoff:
+      ethereum: 0.70
+      bsc: 0.75
+      polygon: 0.80
+  fdr_control:
+    apply_weekly: true
+    q: 0.05
+
+explainability:
+  top_k_contributors: 3
+  include_examples: true
+  emit_overlap_partners: 5
+
+compute:
+  engine: "spark"                 # spark | ray | dask
+  parallelism:
+    local_mc_tasks: 256
+    null_model_tasks: 256
+    overlap_lsh_tasks: 128
+    rwr_tasks: 128
+    smc_tasks: 256
+  memory_gb_per_task: 4
+  checkpoint_minutes: 15
+
+io:
+  out_tables:
+    token_risk_stream: "tbl_token_risk_stream"
+    token_risk_daily: "tbl_token_risk_daily"
+    gog_edges: "tbl_gog_edges"
+  fields_token_risk:
+    - chain
+    - token
+    - ts
+    - risk_score
+    - risk_ci_low
+    - risk_ci_high
+    - local_zmax
+    - fisher_p_global
+    - rwr_score
+    - rwr_ci_low
+    - top_overlap_partners
+    - reason_text
+
+monitoring:
+  metrics: ["precision_at_k", "auprc", "alert_volume", "latency_p95", "rwr_drift"]
+  alert_channels: ["slack","email"]
+  offline_eval_refresh_days: 7

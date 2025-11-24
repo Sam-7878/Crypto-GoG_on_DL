@@ -12,10 +12,9 @@ from pathlib import Path
 import sys
 import pandas as pd  # <-- 추가
 from datetime import datetime  # <-- 추가
-
 # 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
-ROOT = Path(__file__).resolve().parent
-# ROOT = Path(__file__).resolve().parent.parent
+# ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT))
 from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
 

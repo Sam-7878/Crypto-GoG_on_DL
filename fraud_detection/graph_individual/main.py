@@ -14,13 +14,18 @@ from fraud_detection.graph_individual.utils import GraphDatasetGenerator
 from pathlib import Path
 import sys
 
+import pandas as pd
+from datetime import datetime
+
+from pathlib import Path
+import sys
+import pandas as pd  # <-- 추가
+from datetime import datetime  # <-- 추가
 # 프로젝트 루트를 PYTHONPATH에 추가 (common 모듈 로드용)
+# ROOT = Path(__file__).resolve().parent
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT))
 from common.settings import SETTINGS, CHAIN, CHAIN_LABELS
-
-import pandas as pd
-from datetime import datetime
 
 
 def evaluate_scores(y_true, scores):
@@ -37,21 +42,22 @@ def evaluate_scores(y_true, scores):
     return auc, ap
 
 
-def is_unsupervised_deep_model(model):
-    # 필요하면 AutoEncoder, ALAD 같은 다른 딥러닝 비지도 모델도 여기에 추가 가능
-    return isinstance(model, VAE)
+def orient_scores(y_true, scores):
+    """AUC >= 0.5 방향으로 score를 정렬한 값을 반환합니다.
+    evaluate_scores와 동일한 규칙을 사용하지만,
+    보정된 score 배열을 돌려줍니다."""
+    auc = roc_auc_score(y_true, scores)
+    if auc < 0.5:
+        return -scores
+    return scores
 
 
-def eval_roc_auc(label, score):
-    roc_auc = roc_auc_score(y_true=label, y_score=score)
-    if roc_auc < 0.5:
-        score = [1 - s for s in score]
-        roc_auc = roc_auc_score(y_true=label, y_score=score)
-    return roc_auc
-
-
-def eval_average_precision(label, score):
-    return average_precision_score(y_true=label, y_score=score)
+def is_unsupervised_model(model):
+    """
+    model이 비지도 학습(레이블 없이 학습) 모델인지 판단합니다.
+    현재는 COPOD, IForest, DIF, LOF를 비지도 모델로 간주합니다.
+    """
+    return isinstance(model, (COPOD, IForest, DIF, LOF))
 
 
 def tune_and_find_best_params(
@@ -66,36 +72,79 @@ def tune_and_find_best_params(
     param_search_records: list,
 ):
     """
-    - 주어진 param_grid에 대해 validation AUC가 가장 높은 파라미터를 찾고
-    - 각 파라미터 조합에 대한 결과를 param_search_records 리스트에 기록합니다.
+    하이퍼파라미터 튜닝(랜덤 검색) 후, 최고 AUC를 주는 파라미터를 반환합니다.
+    비지도 모델/지도 모델을 구분하여 적절히 학습합니다.
     """
-    best_auc = -np.inf
-    best_params = None
 
-    for params in param_grid:   # 이미 list[dict] 이므로 그대로 순회
+    def evaluate_single_param_set(x_train, y_train, x_val, y_val, params):
+        """
+        주어진 파라미터(params)로 model을 학습하고,
+        validation set에 대한 AUC/AP를 계산하여 반환합니다.
+        """
         model.set_params(**params)
 
         if isinstance(model, VAE):
-            # VAE는 비지도 → y 사용 X
+            # VAE는 fit(X)만 받으므로 비지도로 처리
             model.fit(x_train)
+            y_scores = model.decision_function(x_val)
+            auc, ap = evaluate_scores(y_val, y_scores)
+            return auc, ap
+
+        # 다른 모델의 경우, 비지도/지도 여부에 따라 fit 인자를 달리합니다.
+        if is_unsupervised_model(model):
+            model.fit(x_train)  # 레이블 없이 학습
         else:
-            model.fit(x_train, y_train)
+            model.fit(x_train, y_train)  # 레이블과 함께 학습
 
-        y_val_scores = model.decision_function(x_val)
-        auc, ap = evaluate_scores(y_val, y_val_scores)
+        y_scores = model.decision_function(x_val)
+        auc, ap = evaluate_scores(y_val, y_scores)
+        return auc, ap
 
-        # CSV 저장용 record 추가
+    best_auc = -1
+    best_params = None
+
+    import itertools
+
+    keys = list(param_grid.keys())
+    all_param_combinations = list(itertools.product(*param_grid.values()))
+
+    # 현재 모델이 실제로 지원하는 파라미터 목록
+    valid_keys_all = set(model.get_params().keys())
+
+    for values in all_param_combinations:
+        raw_params = dict(zip(keys, values))
+
+        # 모델이 지원하지 않는 파라미터는 자동으로 제거
+        params = {k: v for k, v in raw_params.items() if k in valid_keys_all}
+        dropped = set(raw_params.keys()) - set(params.keys())
+        if dropped:
+            print(
+                f"[WARN] [{chain}][{model_name}] dropping invalid params {dropped} "
+                f"(not in {model.__class__.__name__}.get_params().keys())"
+            )
+
+        auc, ap = evaluate_single_param_set(
+            x_train, y_train, x_val, y_val, params
+        )
+
+        # 탐색 과정 로그
+        print(
+            f"[Chain: {chain}] [Model: {model_name}] "
+            f"Params: {params} -> AUC: {auc:.4f}, AP: {ap:.4f}"
+        )
+
+        # 기록용 dict 구성 및 추가
         rec = {
             "chain": chain,
             "model": model_name,
-            "auc": float(auc),
-            "ap": float(ap),
+            "val_auc": float(auc),
+            "val_ap": float(ap),
         }
-        # 파라미터들도 같이 기록 (모델마다 파라미터 구성이 달라서 컬럼은 union이 됩니다)
         for k, v in params.items():
-            rec[k] = v
+            rec[f"param_{k}"] = v
         param_search_records.append(rec)
 
+        # 최고 AUC 갱신 시 best_params 갱신
         if auc > best_auc:
             best_auc = auc
             best_params = params
@@ -121,6 +170,8 @@ def evaluate_model_with_seeds(model, best_params, x, y, seeds):
 
         if isinstance(model, VAE):
             model.fit(x_train)
+        elif is_unsupervised_model(model):
+            model.fit(x_train)
         else:
             model.fit(x_train, y_train)
 
@@ -130,7 +181,99 @@ def evaluate_model_with_seeds(model, best_params, x, y, seeds):
         aucs.append(auc)
         aps.append(ap)
 
-    return np.mean(aucs), np.std(aucs), np.mean(aps), np.std(aps)
+    avg_auc = np.mean(aucs)
+    std_auc = np.std(aucs)
+    avg_ap = np.mean(aps)
+    std_ap = np.std(aps)
+
+    return avg_auc, std_auc, avg_ap, std_ap
+
+
+def load_ts_first_for_chain(chain: str, n_samples: int):
+    """
+    ./data/features/{chain}_basic_metrics_processed.csv 에 있는 토큰 메타데이터를 기준으로,
+    ./data/transactions/{chain}/{contract}.csv 파일에서 최소 timestamp(=ts_first)를 뽑아옵니다.
+
+    반환:
+      - 길이 n_samples 의 np.ndarray (float, unix timestamp)
+      - 실패 시 None
+    """
+    meta_path = Path(f"./data/features/{chain}_basic_metrics_processed.csv")
+    if not meta_path.exists():
+        print(f"[WARN] meta feature file not found: {meta_path}")
+        return None
+
+    try:
+        meta_df = pd.read_csv(meta_path)
+    except Exception as e:
+        print(f"[WARN] failed to read meta feature file {meta_path}: {e}")
+        return None
+
+    if len(meta_df) != n_samples:
+        print(f"[WARN] meta_df length ({len(meta_df)}) != n_samples ({n_samples}); ts_first not attached.")
+        return None
+
+    # 어느 컬럼이 컨트랙트 주소인지 추론
+    candidate_cols = [
+        "address",
+        "contract",
+        "token",
+        "token_address",
+        "contract_address",
+    ]
+    contract_col = None
+    for c in candidate_cols:
+        if c in meta_df.columns:
+            contract_col = c
+            break
+
+    if contract_col is None:
+        print(f"[WARN] could not find contract column in meta_df (tried {candidate_cols}); ts_first not attached.")
+        return None
+
+    print(f"[INFO] using contract column '{contract_col}' from {meta_path}")
+
+    from functools import lru_cache
+
+    @lru_cache(maxsize=None)
+    def get_first_timestamp_for_contract(addr: str):
+        """
+        ./data/transactions/{chain}/{addr}.csv 에서 'timestamp' 혹은 'time_stamp' 컬럼의 최소값을 반환.
+        파일이 없거나 컬럼이 없으면 NaN.
+        """
+        tx_file = Path(f"./data/transactions/{chain}/{addr}.csv")
+        if not tx_file.exists():
+            # 거래가 없는 토큰일 수 있음
+            return np.nan
+
+        try:
+            df_tx = pd.read_csv(tx_file)
+        except Exception as e:
+            print(f"[WARN] failed to read tx file {tx_file}: {e}")
+            return np.nan
+
+        # 실제 샘플 파일을 보면 'timestamp' 컬럼이 존재함
+        if "timestamp" in df_tx.columns:
+            ts = df_tx["timestamp"]
+        elif "time_stamp" in df_tx.columns:
+            ts = df_tx["time_stamp"]
+        else:
+            print(f"[WARN] no timestamp column in {tx_file} (expected 'timestamp' or 'time_stamp')")
+            return np.nan
+
+        ts = pd.to_numeric(ts, errors="coerce")
+        ts = ts.dropna()
+        if ts.empty:
+            return np.nan
+        return float(ts.min())
+
+    ts_list = []
+    for addr in meta_df[contract_col]:
+        ts_list.append(get_first_timestamp_for_contract(str(addr)))
+
+    ts_arr = np.array(ts_list, dtype=float)
+    print("[INFO] loaded ts_first for", np.isfinite(ts_arr).sum(), "/", len(ts_arr), "tokens")
+    return ts_arr
 
 
 def main():
@@ -155,62 +298,73 @@ def main():
 
     # Train / Val / Test 분할
     x_train_val, x_test, y_train_val, y_test = train_test_split(
-        x, y, test_size=0.1, random_state=42
+        x, y, test_size=0.3, random_state=42, stratify=y
     )
     x_train, x_val, y_train, y_val = train_test_split(
-        x_train_val, y_train_val, test_size=0.1, random_state=42
+        x_train_val, y_train_val, test_size=0.2, random_state=42, stratify=y_train_val
     )
 
-    num_features = x.shape[1]
-    hidden_size = min(20, num_features // 2)
+    # -----------------------------
+    # 모델 및 하이퍼파라미터 그리드 정의
+    # -----------------------------
+    models = {}
 
+    models["COPOD"] = (
+        COPOD(),
+        {
+            "n_jobs": [1],
+        },
+    )
+
+    models["IForest"] = (
+        IForest(),
+        {
+            "n_estimators": [100, 200],
+            "max_samples": [256, 512],
+            "contamination": [0.01, 0.05, 0.1],
+            "n_jobs": [1],
+        },
+    )
+
+    models["DIF"] = (
+        DIF(),
+        {
+            "n_estimators": [50, 100],
+            "max_samples": [256, 512],
+            "contamination": [0.01, 0.05, 0.1],
+            "n_jobs": [1],
+        },
+    )
+
+    # VAE Hyperparams
     try:
-        models = {
-            "COPOD": (
-                COPOD(),
-                [{"contamination": f} for f in np.linspace(0.01, 0.1, 10)],
-            ),
-
-            "Isolation Forest": (
-                IForest(),
-                [
-                    {"n_estimators": n, "max_samples": s}
-                    for n in [100, 200]
-                    for s in [256, 512]
-                ],
-            ),
-
-            "DIF": (
-                DIF(),
-                [{"contamination": f} for f in np.linspace(0.01, 0.05, 5)],
-            ),
-
-            "VAE": (
-                VAE(
-                    encoder_neuron_list=[hidden_size],
-                    decoder_neuron_list=[hidden_size],
-                    contamination=0.1,
-                ),
-                [
-                    {
-                        "encoder_neuron_list": [n],
-                        "decoder_neuron_list": [n],
-                        "contamination": f,
-                    }
-                    for n in [max(1, hidden_size // 2), hidden_size, hidden_size * 2]
-                    for f in np.linspace(0.1, 0.3, 3)
-                ],
-            ),
-        }
-
-    except TypeError as e:
-        raise RuntimeError(
-            f"VAE 초기화 실패: 현재 설치된 pyod 버전의 VAE 인자 이름을 확인하세요. 원본 에러: {e}"
+        models["VAE"] = (
+            VAE(),
+            {
+                "n_hidden": [16, 32],
+                "n_latent": [4, 8],
+                "epochs": [50, 100],
+                "batch_size": [64, 128],
+                "contamination": [0.01, 0.05, 0.1],
+                "dropout_rate": [0.1, 0.3],
+                "lr": [1e-3, 1e-4],
+            },
+        )
+    except TypeError:
+        # pyod VAE 시그니처가 다른 버전용 fallback
+        models["VAE"] = (
+            VAE(),
+            {
+                "hidden_neurons": [[16], [32]],
+                "latent_dim": [4, 8],
+                "epochs": [50, 100],
+                "batch_size": [64, 128],
+                "contamination": [0.01, 0.05, 0.1],
+                "dropout_rate": [0.1, 0.3],
+                "learning_rate": [1e-3, 1e-4],
+            },
         )
 
-    # ----------------------------------
-    # 결과 저장 폴더 및 타임스탬프 준비
-    # ----------------------------------
     results_dir = Path("./results/fraud_detection/graph_individual")
     results_dir.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -221,6 +375,31 @@ def main():
     seeds = [42, 43, 44]
     param_search_records = []
     final_eval_records = []
+
+    # -----------------------------
+    # 전체 샘플에 대한 score CSV 준비
+    # -----------------------------
+    n_samples = x.shape[0]
+
+    # (NEW) 토큰별 첫 거래 timestamp(ts_first) 로드
+    ts_first = load_ts_first_for_chain(chain, n_samples)
+
+    print(f"[INFO] Preparing timestamp-attached score DataFrame for {n_samples} samples.")
+    print(f"[INFO] ts_first is {'available' if ts_first is not None else 'not available'}.")
+    print(f"[INFO] Sample ts_first values (first 10): {ts_first[:10] if ts_first is not None else 'N/A'}")
+
+    score_df = pd.DataFrame(
+        {
+            "chain": [chain] * n_samples,
+            "idx": np.arange(n_samples),
+            "label": y.astype(int),
+        }
+    )
+
+    # ts_first가 정상적으로 계산되었으면 컬럼으로 추가
+    if ts_first is not None:
+        score_df["ts_first"] = ts_first
+
 
     for model_name, (model, param_grid) in models.items():
         best_params = tune_and_find_best_params(
@@ -261,6 +440,22 @@ def main():
                 rec[f"best_{k}"] = v
             final_eval_records.append(rec)
 
+            # 전체 데이터에 대한 score 계산 및 저장용 컬럼 추가
+            try:
+                model.set_params(**best_params)
+                if isinstance(model, VAE):
+                    model.fit(x)
+                elif is_unsupervised_model(model):
+                    model.fit(x)
+                else:
+                    model.fit(x, y)
+                raw_scores = model.decision_function(x)
+                oriented_scores = orient_scores(y, raw_scores)
+                col_name = f"score_{model_name}"
+                score_df[col_name] = oriented_scores
+            except Exception as e:
+                print(f"[WARN] Failed to compute full-dataset scores for {model_name}: {e}")
+
         else:
             print(f"{model_name} failed to find suitable parameters.")
 
@@ -277,6 +472,11 @@ def main():
     if final_eval_records:
         pd.DataFrame(final_eval_records).to_csv(final_csv_path, index=False)
         print(f"[INFO] Final evaluation results saved to: {final_csv_path}")
+
+    # 개별 토큰별 score CSV 저장 (MC / Nested GNN 파이프라인에서 baseline으로 활용)
+    score_csv_path = results_dir / f"graph_individual_scores_{chain}_{run_id}.csv"
+    score_df.to_csv(score_csv_path, index=False)
+    print(f"[INFO] Per-sample scores saved to: {score_csv_path}")
 
 
 if __name__ == "__main__":

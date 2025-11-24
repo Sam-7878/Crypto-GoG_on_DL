@@ -20,7 +20,7 @@ lc = pd.read_csv('./data/labels.csv')
 lc['Chain'] = lc['Chain'].astype(str)
 
 alias_map = {
-    'bnb': {'bnb', 'bsc', 'binance', 'binance-smart-chain'},
+    'bsc': {'bnb', 'bsc', 'binance', 'binance-smart-chain'},
     'ethereum': {'ethereum', 'eth'},
     'polygon': {'polygon', 'matic'},
 }

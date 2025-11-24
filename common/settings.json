@@ -1,5 +1,5 @@
 {
-  "chain": "ethereum",            // bnb | ethereum | polygon
+  "chain": "bsc",            // bsc | ethereum | polygon
   "paths": {
     "data_root": "./dataset",
     "logs_dir": "./logs"

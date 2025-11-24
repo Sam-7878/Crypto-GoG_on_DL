@@ -141,8 +141,8 @@ if __name__ == "__main__":
     chain_indexes = {
         'ethereum': 1, 
         'polygon': 2, 
-        'bsc': 3,
-        'bnb': 3,     # 혹시 settings 에서 bsc 로 쓸 때도 같이 커버
+        'bsc': 3,   # 혹시 settings 에서 bsc 로 쓸 때도 같이 커버
+        # 'bnb': 3,     
    }
 
     all_address_index = dict(zip(labels_select_df.Contract, labels_select_df.index))

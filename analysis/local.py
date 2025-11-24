@@ -50,32 +50,32 @@ poly_basic   = pd.read_csv('./results/polygon_basic_metrics.csv')
 poly_labels  = pd.read_csv('./results/polygon_advanced_metrics_labels.csv')
 eth_basic    = pd.read_csv('./results/ethereum_basic_metrics.csv')
 eth_labels   = pd.read_csv('./results/ethereum_advanced_metrics_labels.csv')
-bnb_basic    = pd.read_csv('./results/bnb_basic_metrics.csv')
-bnb_labels   = pd.read_csv('./results/bnb_advanced_metrics_labels.csv')
+bsc_basic    = pd.read_csv('./results/bsc_basic_metrics.csv')
+bsc_labels   = pd.read_csv('./results/bsc_advanced_metrics_labels.csv')
 
 # 2) 라벨 쪽에 먼저 표준화 적용 (Class, Chain 이름 맞추기)
 poly_labels = _normalize_columns(poly_labels, 'Polygon')
 eth_labels  = _normalize_columns(eth_labels,  'Ethereum')
-bnb_labels  = _normalize_columns(bnb_labels,  'BNB')
+bsc_labels  = _normalize_columns(bsc_labels,  'BSC')
 
 # 3) basic + labels merge
 polygon_graphs  = pd.merge(poly_basic, poly_labels, on='Contract')
 ethereum_graphs = pd.merge(eth_basic,  eth_labels,  on='Contract')
-bnb_graphs      = pd.merge(bnb_basic,  bnb_labels,  on='Contract')
+bsc_graphs      = pd.merge(bsc_basic,  bsc_labels,  on='Contract')
 
 # 4) 이제는 merge 후에 다시 _normalize_columns 호출할 필요 없음
 #    (아래 세 줄은 삭제 또는 주석 처리)
-# bnb_graphs      = _normalize_columns(bnb_graphs,      'bnb')
+# bsc_graphs      = _normalize_columns(bsc_graphs,      'bsc')
 # ethereum_graphs = _normalize_columns(ethereum_graphs, 'ethereum')
 # polygon_graphs  = _normalize_columns(polygon_graphs,  'polygon')
 
 # 5) concat
-graphs = pd.concat([bnb_graphs, ethereum_graphs, polygon_graphs], ignore_index=True)
+graphs = pd.concat([bsc_graphs, ethereum_graphs, polygon_graphs], ignore_index=True)
 
 
 filtered_graph = graphs[['Contract', 'Chain', 'Class']]
 
-print("BNB cols:", bnb_graphs.columns.tolist())
+print("BSC cols:", bsc_graphs.columns.tolist())
 print("ETH cols:", ethereum_graphs.columns.tolist())
 print("POLY cols:", polygon_graphs.columns.tolist())
 
@@ -122,19 +122,19 @@ palette = sns.color_palette('Set2')
 chain_colors = {
     'Polygon': palette[0],
     'Ethereum': palette[1],
-    'BNB': palette[2]
+    'BSC': palette[2]
 }
 
 
-def plot_grouped_boxplot(data_polygon, data_ethereum, data_bnb, ax, 
+def plot_grouped_boxplot(data_polygon, data_ethereum, data_bsc, ax, 
                          metrics, labels, log = True):
     data_polygon['Chain'] = 'Polygon'
     data_ethereum['Chain'] = 'Ethereum'
-    data_bnb['Chain'] = 'BNB'
+    data_bsc['Chain'] = 'BSC'
     
     combined_data = pd.concat([data_polygon[metrics + ['Chain']],
                                data_ethereum[metrics + ['Chain']],
-                               data_bnb[metrics + ['Chain']]])
+                               data_bsc[metrics + ['Chain']]])
     
     melted_data = combined_data.melt(id_vars='Chain', var_name='Metric', value_name='Value')
     
@@ -152,27 +152,27 @@ def plot_grouped_boxplot(data_polygon, data_ethereum, data_bnb, ax,
 fig, axes = plt.subplots(1, 4, figsize=(20, 5))
 
 # Subfigure 1: Number of Nodes and Number of Edges
-plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bnb_graphs, axes[0],
+plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bsc_graphs, axes[0],
                      ['Num_nodes', 'Num_edges'], #'Number of Nodes and Edges', 
                      ['Num nodes', 'Num edges'], True)
 axes[0].text(0.5, -0.13, '(a)', ha='center', va='top', transform=axes[0].transAxes, fontsize=20)
 
 # Subfigure 2: Density, Reciprocity, Clustering Coefficient
-plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bnb_graphs, axes[1],
+plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bsc_graphs, axes[1],
                      ['Reciprocity', 'Clustering_Coefficient'],
                      #'Reciprocity and Clustering Coefficient',
                      ['Reciprocity', 'Clustering'], False)
 axes[1].text(0.5, -0.13, '(b)', ha='center', va='top', transform=axes[1].transAxes, fontsize=20)
 
 # Subfigure 3: Assortativity
-plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bnb_graphs, axes[2],
+plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bsc_graphs, axes[2],
                      ['Assortativity'],
                      #'Assortativity',
                      ['Assortativity'], False)
 axes[2].text(0.5, -0.13, '(c)', ha='center', va='top', transform=axes[2].transAxes, fontsize=20)
 
 # Subfigure 4: Effective Diameter
-plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bnb_graphs, axes[3],
+plot_grouped_boxplot(polygon_graphs, ethereum_graphs, bsc_graphs, axes[3],
                      ['Effective_Diameter'], #'Effective Diameter', 
                      ['Effective Diameter'], True)
 axes[3].text(0.5, -0.13, '(d)', ha='center', va='top', transform=axes[3].transAxes, fontsize=20)

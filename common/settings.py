@@ -6,17 +6,17 @@ from typing import Literal, Any, Dict, Optional
 import json, os, sys
 import pandas as pd
 
-AllowedChain = Literal["bnb", "ethereum", "polygon"]
+AllowedChain = Literal["bsc", "ethereum", "polygon"]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "chain": "bnb",
+    "chain": "bsc",
     "paths": {"data_root": "./dataset", "logs_dir": "./logs"},
     "metrics": {"n_samples": 100, "undirected": True, "rng_seed": 0},
 }
 
 @dataclass
 class Settings:
-    chain: AllowedChain = "bnb"
+    chain: AllowedChain = "bsc"
     paths: Dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CONFIG["paths"]))
     metrics: Dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_CONFIG["metrics"]))
     raw: Dict[str, Any] = field(default_factory=dict)  # 전체 원본 보관(옵션)
@@ -31,8 +31,8 @@ def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return out
 
 def _validate_chain(value: Any) -> AllowedChain:
-    if value not in ("bnb", "ethereum", "polygon"):
-        raise ValueError(f"Invalid chain='{value}'. Must be one of: bnb | ethereum | polygon")
+    if value not in ("bsc", "ethereum", "polygon"):
+        raise ValueError(f"Invalid chain='{value}'. Must be one of: bsc | ethereum | polygon")
     return value  # type: ignore[return-value]
 
 # def _load_json(path: Path) -> Dict[str, Any]:
@@ -90,7 +90,7 @@ def _get_chain_labels() -> pd.DataFrame:
     chain = SETTINGS.chain
 
     alias_map = {
-        'bnb': {'bnb', 'bsc', 'binance', 'binance-smart-chain'},
+        'bsc': {'bsc', 'bsc', 'binance', 'binance-smart-chain'},
         'ethereum': {'ethereum', 'eth'},
         'polygon': {'polygon', 'matic'},
     }
