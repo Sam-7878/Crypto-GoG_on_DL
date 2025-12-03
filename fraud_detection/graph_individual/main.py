@@ -83,22 +83,40 @@ def tune_and_find_best_params(
         """
         model.set_params(**params)
 
+        # VAE 특별 처리 (NaN/발산 방지)
         if isinstance(model, VAE):
-            # VAE는 fit(X)만 받으므로 비지도로 처리
-            model.fit(x_train)
-            y_scores = model.decision_function(x_val)
+            try:
+                # 입력 쪽에 비유한 값이 남아 있는지 한 번 더 방어
+                if not np.isfinite(x_train).all() or not np.isfinite(x_val).all():
+                    raise ValueError("x_train/x_val contain non-finite values")
+
+                model.fit(x_train)
+                y_scores = model.decision_function(x_val)
+
+                # VAE 출력이 NaN/Inf이면 해당 파라미터 조합은 무효
+                if not np.isfinite(y_scores).all():
+                    raise ValueError("VAE produced non-finite scores")
+
+            except Exception as e:
+                print(
+                    f"[WARN] [VAE] skipping param set {params} due to error: {e}"
+                )
+                # 이 조합은 최적 파라미터로 뽑히지 않도록 아주 낮은 점수 반환
+                return -1.0, -1.0
+
             auc, ap = evaluate_scores(y_val, y_scores)
             return auc, ap
 
-        # 다른 모델의 경우, 비지도/지도 여부에 따라 fit 인자를 달리합니다.
+        # ---- VAE가 아닌 나머지 모델들 ----
         if is_unsupervised_model(model):
-            model.fit(x_train)  # 레이블 없이 학습
+            model.fit(x_train)
         else:
-            model.fit(x_train, y_train)  # 레이블과 함께 학습
+            model.fit(x_train, y_train)
 
         y_scores = model.decision_function(x_val)
         auc, ap = evaluate_scores(y_val, y_scores)
         return auc, ap
+
 
     best_auc = -1
     best_params = None
@@ -168,18 +186,35 @@ def evaluate_model_with_seeds(model, best_params, x, y, seeds):
 
         model.set_params(**best_params)
 
-        if isinstance(model, VAE):
-            model.fit(x_train)
-        elif is_unsupervised_model(model):
-            model.fit(x_train)
-        else:
-            model.fit(x_train, y_train)
+        try:
+            if isinstance(model, VAE):
+                if not np.isfinite(x_train).all() or not np.isfinite(x_test).all():
+                    raise ValueError("x_train/x_test contain non-finite values")
 
-        y_scores = model.decision_function(x_test)
+                model.fit(x_train)
+            else:
+                model.fit(x_train, y_train)
+
+            y_scores = model.decision_function(x_test)
+
+            if not np.isfinite(y_scores).all():
+                raise ValueError("model produced non-finite scores")
+
+        except Exception as e:
+            print(
+                f"[WARN] [Eval seeds] skipping seed {seed} for model "
+                f"{model.__class__.__name__} due to error: {e}"
+            )
+            # 이 seed는 건너뛰고 다음 seed로 진행
+            continue
+
         auc, ap = evaluate_scores(y_test, y_scores)
-
         aucs.append(auc)
         aps.append(ap)
+
+    if not aucs:
+        print("[WARN] evaluate_model_with_seeds: no valid AUC/AP computed; returning NaN.")
+        return np.nan, np.nan, np.nan, np.nan
 
     avg_auc = np.mean(aucs)
     std_auc = np.std(aucs)
@@ -187,6 +222,7 @@ def evaluate_model_with_seeds(model, best_params, x, y, seeds):
     std_ap = np.std(aps)
 
     return avg_auc, std_auc, avg_ap, std_ap
+
 
 
 def load_ts_first_for_chain(chain: str, n_samples: int):
@@ -215,6 +251,11 @@ def load_ts_first_for_chain(chain: str, n_samples: int):
 
     # 어느 컬럼이 컨트랙트 주소인지 추론
     candidate_cols = [
+        "Contract",
+        "Address",
+        "Token",
+        "Token_address",
+        "Contract_address",
         "address",
         "contract",
         "token",
@@ -222,14 +263,42 @@ def load_ts_first_for_chain(chain: str, n_samples: int):
         "contract_address",
     ]
     contract_col = None
+
+    # 1) 정확히 일치하는 컬럼명 우선
     for c in candidate_cols:
         if c in meta_df.columns:
             contract_col = c
             break
 
+    # 2) 이름에 address/contract/token 이 포함된 컬럼을 heuristic으로 탐색
     if contract_col is None:
-        print(f"[WARN] could not find contract column in meta_df (tried {candidate_cols}); ts_first not attached.")
-        return None
+        addr_like_cols = []
+        for col in meta_df.columns:
+            col_l = str(col).lower()
+            if any(kw in col_l for kw in ["Address", "Contract", "Token", "address", "contract", "token"]):
+                series = meta_df[col].astype(str)
+                sample = series.dropna().head(50)
+                if not sample.empty:
+                    ratio = (sample.str.startswith("0x")).mean()
+                    if ratio >= 0.5:
+                        addr_like_cols.append((col, ratio))
+
+        if addr_like_cols:
+            # 0x... 비율이 가장 높은 컬럼을 사용
+            addr_like_cols.sort(key=lambda x: x[1], reverse=True)
+            contract_col = addr_like_cols[0][0]
+            print(
+                f"[INFO] inferred contract column '{contract_col}' from meta_df "
+                f"based on address-like pattern."
+            )
+
+    # 3) 그래도 못 찾으면 NaN 배열을 반환해서, 나머지 파이프라인은 계속 돌도록 함
+    if contract_col is None:
+        print(
+            "[WARN] could not find any contract/address-like column in meta_df; "
+            "ts_first will be NaN and timestamp will be omitted from score CSV."
+        )
+        return np.full(n_samples, np.nan, dtype=float)
 
     print(f"[INFO] using contract column '{contract_col}' from {meta_path}")
 
@@ -287,6 +356,7 @@ def main():
         f'./data/features/{chain}_basic_metrics_processed.csv'
     )
     data_list = dataset_generator.get_pyg_data_list()
+
     x = torch.cat([data.x for data in data_list], dim=0).numpy()
     y = torch.cat(
         [data.y.unsqueeze(0) if data.y.dim() == 0 else data.y for data in data_list]
@@ -295,6 +365,21 @@ def main():
     # NaN 처리
     imputer = SimpleImputer(strategy='mean')
     x = imputer.fit_transform(x)
+
+    # NaN/Inf가 남아 있는지 최종 체크 후 안전하게 치환
+    if not np.isfinite(x).all():
+        n_nan = np.isnan(x).sum()
+        n_posinf = np.isinf(x).sum()
+        n_neginf = np.isneginf(x).sum() if hasattr(np, "isneginf") else 0
+        print(
+            f"[WARN] After imputation, still NaN: {n_nan}, +Inf: {n_posinf}, -Inf: {n_neginf}. "
+            "Replacing them with finite values via np.nan_to_num."
+        )
+        # NaN → 0, +Inf → 큰 양수, -Inf → 큰 음수 로 치환
+        x = np.nan_to_num(x, nan=0.0, posinf=1e9, neginf=-1e9)
+
+    print(f"[INFO] Loaded dataset for chain '{chain}': {x.shape[0]} samples, {x.shape[1]} features.")
+
 
     # Train / Val / Test 분할
     x_train_val, x_test, y_train_val, y_test = train_test_split(
@@ -385,8 +470,12 @@ def main():
     ts_first = load_ts_first_for_chain(chain, n_samples)
 
     print(f"[INFO] Preparing timestamp-attached score DataFrame for {n_samples} samples.")
-    print(f"[INFO] ts_first is {'available' if ts_first is not None else 'not available'}.")
-    print(f"[INFO] Sample ts_first values (first 10): {ts_first[:10] if ts_first is not None else 'N/A'}")
+
+    if ts_first is None:
+        sys.stderr.write(f"[INFO] ts_first is not available.")
+        sys.exit(1)
+    else:
+        print(f"[INFO] Sample ts_first values (first 10): {ts_first[:10]}")
 
     score_df = pd.DataFrame(
         {
