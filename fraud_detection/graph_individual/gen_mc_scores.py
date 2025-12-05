@@ -1,288 +1,242 @@
-import argparse
+"""
+gen_mc_scores.py
+MC 파이프라인용 Score 추출 스크립트
+"""
 import os
-import torch
-import torch.nn as nn
-import torch.optim as optim
+import sys
+import argparse
 import numpy as np
 import pandas as pd
-from torch.utils.data import DataLoader
-from sklearn.metrics import f1_score, roc_auc_score, precision_recall_curve, auc
-import dgl
-from dgl.dataloading import GraphDataLoader
+import torch
+import torch.nn as nn
 
-# 기존 모델 및 데이터셋 import (프로젝트 구조에 맞게 조정)
-from models import GoGModel  # 실제 모델 클래스명으로 변경
-from datasets import CryptoDataset  # 실제 데이터셋 클래스명으로 변경
+# 프로젝트 경로 설정
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+try:
+    from dgl.dataloading import GraphDataLoader
+    import dgl
+except ImportError:
+    print("DGL not installed. Run: pip install dgl")
+    sys.exit(1)
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='GoG Fraud Detection')
-    
-    # 데이터 관련
-    parser.add_argument('--data_dir', type=str, default='./data', help='Data directory')
-    parser.add_argument('--dataset', type=str, default='elliptic', help='Dataset name')
-    
-    # 모델 관련
-    parser.add_argument('--hidden_dim', type=int, default=128, help='Hidden dimension')
-    parser.add_argument('--num_layers', type=int, default=3, help='Number of GNN layers')
-    parser.add_argument('--dropout', type=float, default=0.3, help='Dropout rate')
-    
-    # 학습 관련
-    parser.add_argument('--epochs', type=int, default=100, help='Number of epochs')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
-    parser.add_argument('--lr', type=float, default=0.001, help='Learning rate')
-    parser.add_argument('--weight_decay', type=float, default=5e-4, help='Weight decay')
-    
-    # 평가 및 저장
-    parser.add_argument('--save_dir', type=str, default='./checkpoints', help='Model save directory')
-    parser.add_argument('--extract_scores', action='store_true', help='Extract scores for MC pipeline')
-    parser.add_argument('--score_output', type=str, default='mc_input_scores.csv', help='Score output file')
-    
+    parser = argparse.ArgumentParser(description='Extract MC scores from trained model')
+    parser.add_argument('--data_dir', type=str, default='./data')
+    parser.add_argument('--dataset', type=str, default='elliptic')
+    parser.add_argument('--model_path', type=str, default='./checkpoints/best_model.pth')
+    parser.add_argument('--batch_size', type=int, default=32)
+    parser.add_argument('--hidden_dim', type=int, default=128)
+    parser.add_argument('--num_layers', type=int, default=3)
+    parser.add_argument('--extract_scores', action='store_true')
+    parser.add_argument('--score_output', type=str, default='mc_input_scores.csv')
+    parser.add_argument('--save_dir', type=str, default='./checkpoints')
     return parser.parse_args()
 
 
 def evaluate_and_extract_scores(model, test_loader, device, save_path='mc_input_scores.csv'):
     """
-    모델 평가 및 MC 파이프라인용 Score 데이터 추출
+    테스트 데이터에서 fraud score를 추출하여 CSV로 저장
     """
     model.eval()
-    
+
     all_node_ids = []
     all_labels = []
     all_scores = []
-    
-    batch_offset = 0  # 전체 노드 인덱스 오프셋
-    
-    print("   📦 Processing batches...")
-    
+    global_offset = 0
+
+    print("Processing batches...")
+
     with torch.no_grad():
         for batch_idx, batch_data in enumerate(test_loader):
-            try:
-                # 배치 데이터 처리 (DGL 배치 형식 호환)
-                if isinstance(batch_data, (list, tuple)) and len(batch_data) >= 2:
-                    graphs, labels = batch_data,[object Object],, batch_data,[object Object],
+
+            # 배치 데이터 언패킹
+            if isinstance(batch_data, (list, tuple)):
+                if len(batch_data) >= 2:
+                    graphs = batch_data,[object Object],
+                    labels = batch_data,[object Object],
                 else:
-                    graphs = batch_data
-                    labels = graphs.ndata.get('label', None)
-                
-                graphs = graphs.to(device)
-                if isinstance(labels, torch.Tensor):
-                    labels = labels.to(device)
-                
-                # 모델 예측
-                logits = model(graphs)
-                
-                # **핵심 수정: 배치 크기 올바르게 추출**
-                current_batch_size = logits.shape,[object Object],  # ✅ logits.shape,[object Object], 사용
-                
-                # 확률 계산 (fraud 클래스 확률)
-                probs = torch.softmax(logits, dim=-1)
-                positive_scores = probs[:, 1].cpu().numpy()  # 클래스 1 (fraud)
-                
-                # Node ID 생성
-                if hasattr(graphs, 'ndata') and 'node_id' in graphs.ndata:
-                    node_ids = graphs.ndata['node_id'].cpu().numpy()
-                else:
-                    # 순차 ID 할당 (MC 파이프라인에서 사용 가능)
-                    node_ids = np.arange(batch_offset, batch_offset + current_batch_size)
-                
-                # 오프셋 업데이트
-                batch_offset += current_batch_size
-                
-                # 데이터 누적
-                all_node_ids.extend(node_ids.tolist())
-                all_labels.extend(labels.cpu().numpy().tolist() if labels is not None else [-1] * current_batch_size)
-                all_scores.extend(positive_scores.tolist())
-                
-                # 진행률 출력
-                if (batch_idx + 1) % 50 == 0:
-                    print(f"      Batch {batch_idx+1}/{len(test_loader)} ({batch_offset} samples)")
-                    
-            except Exception as e:
-                print(f"⚠️  Batch {batch_idx} error: {e}")
-                continue
-    
-    # CSV 저장
-    df_scores = pd.DataFrame({
-        'node_id': all_node_ids,
-        'true_label': all_labels,
-        'fraud_probability': all_scores
-    })
-    
-    os.makedirs(os.path.dirname(save_path) or '.', exist_ok=True)
-    df_scores.to_csv(save_path, index=False)
-    
-    print(f"\n✅ 완료! {save_path}")
-    print(f"   📈 총 노드: {len(df_scores):,}")
-    print(f"   🔴 Fraud (label=1): {(df_scores['true_label'] == 1).sum():,}")
-    print(f"   🟢 Normal (label=0): {(df_scores['true_label'] == 0).sum():,}")
-    print(f"   💾 평균 Fraud 확률: {df_scores['fraud_probability'].mean():.4f}")
-    
-    return df_scores
-
-
-def train_epoch(model, train_loader, optimizer, criterion, device):
-    """한 에폭 학습"""
-    model.train()
-    total_loss = 0
-    
-    for batch_data in train_loader:
-        if isinstance(batch_data, tuple):
-            graphs, labels = batch_data
-            graphs = graphs.to(device)
-            labels = labels.to(device)
-        else:
-            graphs = batch_data.to(device)
-            labels = graphs.ndata['label']
-        
-        optimizer.zero_grad()
-        logits = model(graphs)
-        loss = criterion(logits, labels)
-        loss.backward()
-        optimizer.step()
-        
-        total_loss += loss.item()
-    
-    return total_loss / len(train_loader)
-
-
-def evaluate(model, val_loader, device):
-    """검증 세트 평가"""
-    model.eval()
-    all_preds = []
-    all_labels = []
-    all_probs = []
-    
-    with torch.no_grad():
-        for batch_data in val_loader:
-            if isinstance(batch_data, tuple):
-                graphs, labels = batch_data
-                graphs = graphs.to(device)
-                labels = labels.to(device)
+                    graphs = batch_data,[object Object],
+                    labels = None
             else:
-                graphs = batch_data.to(device)
-                labels = graphs.ndata['label']
-            
+                graphs = batch_data
+                labels = None
+
+            # 그래프에서 라벨 추출 시도
+            if labels is None:
+                if hasattr(graphs, 'ndata') and 'label' in graphs.ndata:
+                    labels = graphs.ndata['label']
+
+            # 디바이스로 이동
+            graphs = graphs.to(device)
+            if isinstance(labels, torch.Tensor):
+                labels = labels.to(device)
+
+            # 모델 예측
             logits = model(graphs)
-            probs = torch.softmax(logits, dim=1)
-            preds = torch.argmax(logits, dim=1)
-            
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-            all_probs.extend(probs[:, 1].cpu().numpy())
-    
-    # 메트릭 계산
-    f1 = f1_score(all_labels, all_preds, average='binary')
-    auc_score = roc_auc_score(all_labels, all_probs)
-    
-    return f1, auc_score
+            probs = torch.softmax(logits, dim=-1)
+
+            # fraud 확률 (class 1)
+            fraud_scores = probs[:, 1].detach().cpu().numpy()
+
+            # 배치 크기
+            batch_size = logits.shape,[object Object],
+
+            # node_id 처리
+            if hasattr(graphs, 'ndata') and 'node_id' in graphs.ndata:
+                node_ids = graphs.ndata['node_id'].detach().cpu().numpy()
+            else:
+                node_ids = np.arange(global_offset, global_offset + batch_size)
+
+            global_offset = global_offset + batch_size
+
+            # label 처리
+            if isinstance(labels, torch.Tensor):
+                batch_labels = labels.detach().cpu().numpy()
+            else:
+                batch_labels = np.full(batch_size, -1, dtype=np.int64)
+
+            # 누적
+            all_node_ids.extend(node_ids.tolist())
+            all_labels.extend(batch_labels.tolist())
+            all_scores.extend(fraud_scores.tolist())
+
+            # 진행률 출력
+            if (batch_idx + 1) % 50 == 0:
+                print("  Batch {}/{} done ({} samples)".format(
+                    batch_idx + 1, len(test_loader), len(all_node_ids)))
+
+    # DataFrame 생성
+    df = pd.DataFrame({
+        'node_id': all_node_ids,
+        'label': all_labels,
+        'score': all_scores
+    })
+
+    # 저장
+    save_dir = os.path.dirname(save_path)
+    if save_dir and not os.path.exists(save_dir):
+        os.makedirs(save_dir, exist_ok=True)
+
+    df.to_csv(save_path, index=False)
+
+    print("")
+    print("Score extraction completed!")
+    print("  Saved to: {}".format(save_path))
+    print("  Total samples: {}".format(len(df)))
+
+    if (df['label'] >= 0).any():
+        fraud_count = (df['label'] == 1).sum()
+        normal_count = (df['label'] == 0).sum()
+        print("  Fraud (label=1): {}".format(fraud_count))
+        print("  Normal (label=0): {}".format(normal_count))
+
+    return df
 
 
-def main(args):
-    # 1. Device 설정
+class SimpleGNNModel(nn.Module):
+    """간단한 GNN 모델 (실제 모델로 교체 필요)"""
+    def __init__(self, in_dim, hidden_dim, out_dim, num_layers=3):
+        super(SimpleGNNModel, self).__init__()
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(in_dim, hidden_dim))
+        for _ in range(num_layers - 2):
+            self.layers.append(nn.Linear(hidden_dim, hidden_dim))
+        self.layers.append(nn.Linear(hidden_dim, out_dim))
+        self.relu = nn.ReLU()
+
+    def forward(self, g):
+        if hasattr(g, 'ndata') and 'feat' in g.ndata:
+            h = g.ndata['feat']
+        else:
+            h = g.ndata['x'] if 'x' in g.ndata else None
+            if h is None:
+                raise ValueError("Graph has no node features")
+
+        for i, layer in enumerate(self.layers[:-1]):
+            h = layer(h)
+            h = self.relu(h)
+
+        h = self.layers[-1](h)
+        return h
+
+
+def main():
+    args = parse_args()
+
+    # Device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"🔧 Using device: {device}")
-    
-    # 2. 데이터셋 로드
-    print(f"📂 Loading dataset from {args.data_dir}...")
-    dataset = CryptoDataset(root=args.data_dir, name=args.dataset)
-    
-    # 3. Train/Val/Test 분할
-    # 데이터셋 클래스에 split 메서드가 있다고 가정
-    if hasattr(dataset, 'get_idx_split'):
-        split_idx = dataset.get_idx_split()
-        train_idx, val_idx, test_idx = split_idx['train'], split_idx['valid'], split_idx['test']
-    else:
-        # 수동 분할 (8:1:1 비율)
-        num_samples = len(dataset)
-        indices = np.random.permutation(num_samples)
-        train_size = int(0.8 * num_samples)
-        val_size = int(0.1 * num_samples)
-        
-        train_idx = indices[:train_size]
-        val_idx = indices[train_size:train_size + val_size]
-        test_idx = indices[train_size + val_size:]
-    
-    # Subset 생성
-    train_dataset = torch.utils.data.Subset(dataset, train_idx)
-    val_dataset = torch.utils.data.Subset(dataset, val_idx)
-    test_dataset = torch.utils.data.Subset(dataset, test_idx)
-    
-    # 4. DataLoader 생성
-    train_loader = GraphDataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=4
-    )
-    
-    val_loader = GraphDataLoader(
-        val_dataset,
+    print("Using device: {}".format(device))
+
+    # 데이터셋 로드 (프로젝트에 맞게 수정 필요)
+    print("Loading dataset...")
+
+    try:
+        from fraud_detection.graph_individual.datasets import CryptoDataset
+        dataset = CryptoDataset(root=args.data_dir, name=args.dataset)
+        in_dim = dataset.num_features
+    except Exception as e:
+        print("Dataset loading failed: {}".format(e))
+        print("Using dummy data for testing...")
+
+        # 테스트용 더미 데이터
+        num_nodes = 100
+        in_dim = 64
+        g = dgl.graph((np.random.randint(0, num_nodes, 200),
+                       np.random.randint(0, num_nodes, 200)))
+        g.ndata['feat'] = torch.randn(num_nodes, in_dim)
+        g.ndata['label'] = torch.randint(0, 2, (num_nodes,))
+        dataset = [g]
+
+    # Test loader
+    test_loader = GraphDataLoader(
+        dataset,
         batch_size=args.batch_size,
         shuffle=False,
         drop_last=False,
-        num_workers=4
+        num_workers=0
     )
-    
-    test_loader = GraphDataLoader(
-        test_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,  # 순서 유지 필수!
-        drop_last=False,
-        num_workers=4
-    )
-    
-    print(f"✅ Dataset split - Train: {len(train_dataset)}, Val: {len(val_dataset)}, Test: {len(test_dataset)}")
-    
-    # 5. 모델 초기화
-    model = GoGModel(
-        in_dim=dataset.num_features,
-        hidden_dim=args.hidden_dim,
-        out_dim=2,  # Binary classification
-        num_layers=args.num_layers,
-        dropout=args.dropout
-    ).to(device)
-    
-    print(f"🧠 Model initialized with {sum(p.numel() for p in model.parameters())} parameters")
-    
-    # 6. Optimizer 및 Loss
-    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    criterion = nn.CrossEntropyLoss()
-    
-    # 7. 학습 루프
-    best_val_auc = 0
-    best_model_path = os.path.join(args.save_dir, 'best_model.pth')
-    os.makedirs(args.save_dir, exist_ok=True)
-    
-    print("\n🚀 Starting training...")
-    for epoch in range(args.epochs):
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        val_f1, val_auc = evaluate(model, val_loader, device)
-        
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {train_loss:.4f}, Val F1: {val_f1:.4f}, Val AUC: {val_auc:.4f}")
-        
-        # Best model 저장
-        if val_auc > best_val_auc:
-            best_val_auc = val_auc
-            torch.save(model.state_dict(), best_model_path)
-            print(f"   ✨ New best model saved! (AUC: {val_auc:.4f})")
-    
-    # 8. Best model 로드
-    print(f"\n📥 Loading best model from {best_model_path}")
-    model.load_state_dict(torch.load(best_model_path))
-    
-    # 9. Test 평가
-    test_f1, test_auc = evaluate(model, test_loader, device)
-    print(f"\n🎯 Test Results - F1: {test_f1:.4f}, AUC: {test_auc:.4f}")
-    
-    # 10. MC 파이프라인용 Score 추출
+    print("Test loader ready: {} batches".format(len(test_loader)))
+
+    # 모델 초기화
+    try:
+        from fraud_detection.graph_individual.models import GoGModel
+        model = GoGModel(
+            in_dim=in_dim,
+            hidden_dim=args.hidden_dim,
+            out_dim=2,
+            num_layers=args.num_layers
+        )
+    except Exception as e:
+        print("GoGModel loading failed: {}".format(e))
+        print("Using SimpleGNNModel...")
+        model = SimpleGNNModel(
+            in_dim=in_dim,
+            hidden_dim=args.hidden_dim,
+            out_dim=2,
+            num_layers=args.num_layers
+        )
+
+    model = model.to(device)
+
+    # 체크포인트 로드
+    if os.path.exists(args.model_path):
+        print("Loading model from {}".format(args.model_path))
+        model.load_state_dict(torch.load(args.model_path, map_location=device))
+    else:
+        print("Model file not found: {}".format(args.model_path))
+        print("Proceeding with untrained model...")
+
+    # Score 추출
     if args.extract_scores:
-        print("\n📊 Extracting scores for MC pipeline...")
+        print("")
+        print("Starting score extraction...")
         score_path = os.path.join(args.save_dir, args.score_output)
         evaluate_and_extract_scores(model, test_loader, device, save_path=score_path)
-        print(f"✅ MC pipeline input ready at: {score_path}")
+        print("")
+        print("Done! Output file: {}".format(score_path))
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+if __name__ == '__main__':
+    main()
