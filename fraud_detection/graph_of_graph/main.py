@@ -88,6 +88,47 @@ def run_model(detector, data, seeds):
     return np.mean(auc_scores), np.std(auc_scores), np.mean(ap_scores), np.std(ap_scores)
 
 
+import pickle
+
+def inspect_file(p):
+    try:
+        obj = torch.load(p, map_location="cpu")
+        print("torch.load 성공 →", type(obj))
+    except Exception as e_t:
+        print("torch.load 실패:", e_t)
+        try:
+            with open(p, "rb") as f:
+                obj = pickle.load(f)
+                print("pickle.load 성공 →", type(obj))
+        except Exception as e_p:
+            print("pickle.load 실패:", e_p)
+
+
+# training / validation / test 단계에서 라벨 분포를 출력해 보세요
+def print_label_stats(dataset, name):
+    # dataset 은 torch_geometric.data.Data 객체 혹은 (x, y) 튜플이라고 가정
+    if hasattr(dataset, "y"):
+        y = dataset.y
+    else:
+        _, y = dataset
+    uniq, cnt = torch.unique(y, return_counts=True)
+    print(f"[{name}] label distribution: {dict(zip(uniq.tolist(), cnt.tolist()))}")
+
+
+from sklearn.metrics import roc_auc_score, average_precision_score
+import numpy as np
+
+def safe_auc(y_true, y_score):
+    if len(np.unique(y_true)) < 2:
+        return np.nan
+    return roc_auc_score(y_true, y_score)
+
+def safe_ap(y_true, y_score):
+    if len(np.unique(y_true)) < 2:
+        return 0.0
+    return average_precision_score(y_true, y_score)
+
+
 def main():
     args = Args(gpu=0)  # 또는 그냥 Args()로 두고 기본값 0 사용
 
@@ -301,6 +342,9 @@ def main():
     # -----------------------------
     ## PyTorch Lightning을 이용한 모델 학습 및 체크포인트 저장
     import argparse
+    import pathlib, shutil, warnings
+    import pytorch_lightning as pl
+    from pytorch_lightning.callbacks import ModelCheckpoint
     from fraud_detection.shared.utils import load_yaml
     from fraud_detection.graph_of_graph.data_module import GoGDataModule
     from fraud_detection.shared.base_model import GoGModel
@@ -312,36 +356,49 @@ def main():
     args = parser.parse_args()
 
     cfg = load_yaml(f"common/configs/{args.dataset}.yaml")
-    datamodule = GoGDataModule(cfg)
+
+    # 학습 데이터 파일 검사
+    inspect_file(cfg["train_data"])
+
+    dataModule = GoGDataModule(cfg)
+    # ★ 여기서 데이터셋을 실제로 로드해 줌
+    dataModule.setup("fit")   # train / val 로드
+    dataModule.setup("test")  # test 로드
+
     model = GoGModel(cfg)
+
+    # 라벨 분포 출력
+    print_label_stats(dataModule.train_dataset, "train")
+    print_label_stats(dataModule.val_dataset,   "val")
+    print_label_stats(dataModule.test_dataset,  "test")
+
 
     # ---------- checkpoint callback ----------
     ckpt_cb = ModelCheckpoint(
-        dirpath=args.ckpt_dir,
+        dirpath="checkpoints",
         filename="gog-{epoch:02d}-{val_auc:.4f}",
         monitor="val_auc",
         mode="max",
         save_top_k=1,
-        save_last=False,
     )
-    # ----------------------------------------
 
     trainer = pl.Trainer(
         max_epochs=cfg["max_epochs"],
         accelerator="gpu" if torch.cuda.is_available() else "cpu",
         devices=1,
-        callbacks=[ckpt_cb],   # <-- 리스트에 추가
-        enable_progress_bar=True,
+        callbacks=[ckpt_cb],
+        logger=True,
     )
-    trainer.fit(model, datamodule)
+    trainer.fit(model, dataModule)
 
-    # 학습 후 best.ckpt 심링크
-    best = ckpt_cb.best_model_path
-    if best:
-        import os, shutil, pathlib
-        dst = pathlib.Path(args.ckpt_dir) / "gog_best.ckpt"
-        shutil.copy(best, dst)
-        print("Saved best checkpoint ->", dst.resolve())
+    # ---------- 테스트 ----------
+    trainer.test(model, dataModule)
+
+    # ---------- 최종 checkpoint 복사 ----------
+    if ckpt_cb.best_model_path:
+        dst = pathlib.Path("checkpoints") / "gog_best.ckpt"
+        shutil.copy(ckpt_cb.best_model_path, dst)
+        print(f"✅ Best checkpoint saved → {dst.resolve()}")
 
 
 if __name__ == "__main__":

@@ -18,9 +18,39 @@ def save_pickle(obj, path: str):
     with open(path, "wb") as f:
         pickle.dump(obj, f)
 
-def load_pickle(path: str):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+
+# fraud_detection/shared/utils.py
+import os
+import pickle
+import torch
+from typing import Any, Union
+
+
+def load_yaml(path: Union[str, os.PathLike]) -> dict:
+    """YAML 파일을 읽어 파이썬 dict로 반환합니다."""
+    import yaml
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def load_pickle(path: Union[str, os.PathLike]) -> Any:
+    """
+    파일 확장자에 따라 적절한 로더를 사용합니다.
+    - .pt / .pth 파일: torch.load 사용
+    - 그 외 파일: pickle.load 사용
+    """
+    # 확장자 추출 후 소문자로 변환
+    file_extension = os.path.splitext(str(path))[1].lower()
+
+    if file_extension in {".pt", ".pth"}:
+        # PyTorch 저장 파일
+        return torch.load(path, map_location="cpu")
+    else:
+        # 일반 pickle 파일
+        with open(path, "rb") as f:
+            return pickle.load(f)
+
+
 
 def get_logger(name: str):
     logger = logging.getLogger(name)
