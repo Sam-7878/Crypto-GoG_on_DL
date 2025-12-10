@@ -8,6 +8,9 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 from fraud_detection.graph_of_graph.utils import hierarchical_graph_reader, GraphDatasetGenerator
 from torch_geometric.data import Data
 
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint   # <-- 추가
+
 from pathlib import Path
 import sys
 import pandas as pd  # <-- 추가
@@ -294,6 +297,51 @@ def main():
     final_csv_path = results_dir / f"gog_final_eval_{chain}_{run_id}.csv"
     pd.DataFrame(final_results).to_csv(final_csv_path, index=False)
     print(f"[INFO] Final evaluation results saved to: {final_csv_path}")
+
+    # -----------------------------
+    ## PyTorch Lightning을 이용한 모델 학습 및 체크포인트 저장
+    import argparse
+    from fraud_detection.shared.utils import load_yaml
+    from fraud_detection.graph_of_graph.data_module import GoGDataModule
+    from fraud_detection.shared.base_model import GoGModel
+  
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default="polygon")
+    parser.add_argument("--ckpt_dir", default="checkpoints")  # 저장 위치 인자
+    args = parser.parse_args()
+
+    cfg = load_yaml(f"common/configs/{args.dataset}.yaml")
+    datamodule = GoGDataModule(cfg)
+    model = GoGModel(cfg)
+
+    # ---------- checkpoint callback ----------
+    ckpt_cb = ModelCheckpoint(
+        dirpath=args.ckpt_dir,
+        filename="gog-{epoch:02d}-{val_auc:.4f}",
+        monitor="val_auc",
+        mode="max",
+        save_top_k=1,
+        save_last=False,
+    )
+    # ----------------------------------------
+
+    trainer = pl.Trainer(
+        max_epochs=cfg["max_epochs"],
+        accelerator="gpu" if torch.cuda.is_available() else "cpu",
+        devices=1,
+        callbacks=[ckpt_cb],   # <-- 리스트에 추가
+        enable_progress_bar=True,
+    )
+    trainer.fit(model, datamodule)
+
+    # 학습 후 best.ckpt 심링크
+    best = ckpt_cb.best_model_path
+    if best:
+        import os, shutil, pathlib
+        dst = pathlib.Path(args.ckpt_dir) / "gog_best.ckpt"
+        shutil.copy(best, dst)
+        print("Saved best checkpoint ->", dst.resolve())
 
 
 if __name__ == "__main__":

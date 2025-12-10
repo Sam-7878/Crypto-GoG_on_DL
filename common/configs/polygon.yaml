@@ -1,0 +1,12 @@
+max_epochs: 50
+batch_size: 256
+lr: 1.0e-3
+weight_decay: 1.0e-5
+num_workers: 8          # CPU 코어 수에 맞춰 조정
+model:
+  node_dim: 10          # ← 이런 식으로 중첩돼 있으면
+  hidden: 64
+  latent: 32
+train_data: "GoG/edges/polygon/processed/train_data.pt"
+val_data: "GoG/edges/polygon/processed/val_data.pt"
+test_data: "GoG/edges/polygon/processed/test_data.pt"

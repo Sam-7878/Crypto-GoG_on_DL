@@ -1,0 +1,28 @@
+# fraud_detection/mc_extension/config.yaml
+# ====== 경로 ======
+gog_ckpt: "checkpoints/gog_best.ckpt"   # 기존 GoG 모델
+test_data: "GoG/edges/polygon/processed/test_data.pt"                # PyG Data 리스트
+score_dir: "results/score"               # Phase-0 결과
+mc_dir: "results/mc"                     # Phase-1 결과
+slm_dir: "results/slm"                   # Phase-2 결과
+
+# ====== Phase-0 (Score 추출) ======
+score_batch: 1
+score_device: "cuda"
+
+# ====== Phase-1 (MC 샘플링) ======
+budget: 200               # 한 샘플 그래프의 최대 노드 수
+mc_rounds: 100          # Monte-Carlo 반복
+nested_hidden: 64
+nested_lr: 0.001
+nested_epochs: 5
+
+# ====== Phase-2 (SLM) ======
+slm_learners: ["gog", "nested", "logistic"]  # 사용 weak-learner
+slm_val_interval: 100
+drift_window: 500         # 스트리밍 배치 단위
+drift_alpha: 0.05
+
+# ====== 기타 ======
+global_seed: 42
+num_workers: 4
