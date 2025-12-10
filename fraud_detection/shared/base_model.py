@@ -135,7 +135,7 @@ class GoGModel(pl.LightningModule):
         """
         Lightning 체크포인트여도 state_dict 만 꺼내 복원
         """
-        state = torch.load(ckpt_path, map_location='cpu')
+        state = torch.load(ckpt_path, map_location='cpu', weights_only=False)
         # PL 체크포인트일 경우
         if "state_dict" in state:
             state = state["state_dict"]

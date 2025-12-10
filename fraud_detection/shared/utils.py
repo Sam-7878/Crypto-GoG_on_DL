@@ -44,7 +44,7 @@ def load_pickle(path: Union[str, os.PathLike]) -> Any:
 
     if file_extension in {".pt", ".pth"}:
         # PyTorch 저장 파일
-        return torch.load(path, map_location="cpu")
+        return torch.load(path, map_location="cpu", weights_only=False)
     else:
         # 일반 pickle 파일
         with open(path, "rb") as f:

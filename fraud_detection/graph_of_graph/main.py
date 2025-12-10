@@ -92,7 +92,8 @@ import pickle
 
 def inspect_file(p):
     try:
-        obj = torch.load(p, map_location="cpu")
+        # PyTorch 2.6 안전모드 무시하고 옛날 방식으로 로드
+        obj = torch.load(p, map_location="cpu", weights_only=False)
         print("torch.load 성공 →", type(obj))
     except Exception as e_t:
         print("torch.load 실패:", e_t)
