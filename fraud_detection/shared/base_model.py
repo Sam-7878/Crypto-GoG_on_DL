@@ -55,8 +55,15 @@ class GoGModel(pl.LightningModule):
         )
 
     def forward(self, data: Data):
+        # Data 객체인지 확인
+        if hasattr(data, 'x'):
+            x, edge_index, batch = data.x, data.edge_index, data.batch
+        else:
+            # 이미 언패킹된 경우 처리
+            raise ValueError("Expected PyG Data object with 'x', 'edge_index', 'batch' attributes")
+    
         # --- Level-1 : node-level graph ---
-        z1 = self.node_encoder(data.x, data.edge_index, data.batch)
+        z1 = self.node_encoder(x, edge_index, batch)
         # --- Level-2 : graph-of-graphs (dummy batch if needed) ---
         z2 = self.graph_encoder(z1.unsqueeze(0),  # fake single graph
                                 torch.tensor([[0,0]]).T,  # fake edge
@@ -69,7 +76,15 @@ class GoGModel(pl.LightningModule):
         print("batch keys:", batch.keys)  # PyG Batch 면 .x, .edge_index, .y 등이 있음 
                
         x, y = batch.x, batch.y
-        logits = self(x)
+        # logits = self(x)
+        # batch가 tuple/list인 경우 (data, label) 형태일 수 있음
+        if isinstance(batch, (tuple, list)):
+            data, y = batch
+        else:
+            data = batch
+            y = batch.y
+        
+        logits = self(data)  # x 대신 data(전체 Data 객체)를 전달
         loss = F.cross_entropy(logits, y)
 
         preds = torch.softmax(logits, dim=1)[:, 1]
@@ -84,7 +99,15 @@ class GoGModel(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch.x, batch.y
-        logits = self(x)
+        # logits = self(x)
+        # batch가 tuple/list인 경우 (data, label) 형태일 수 있음
+        if isinstance(batch, (tuple, list)):
+            data, y = batch
+        else:
+            data = batch
+            y = batch.y
+        
+        logits = self(data)  # x 대신 data(전체 Data 객체)를 전달
         loss = F.cross_entropy(logits, y)
 
         preds = torch.softmax(logits, dim=1)[:, 1]
@@ -100,7 +123,15 @@ class GoGModel(pl.LightningModule):
 
     def test_step(self, batch, batch_idx):
         x, y = batch.x, batch.y
-        logits = self(x)
+        # logits = self(x)
+        # batch가 tuple/list인 경우 (data, label) 형태일 수 있음
+        if isinstance(batch, (tuple, list)):
+            data, y = batch
+        else:
+            data = batch
+            y = batch.y
+        
+        logits = self(data)  # x 대신 data(전체 Data 객체)를 전달
         loss = F.cross_entropy(logits, y)
 
         preds = torch.softmax(logits, dim=1)[:, 1]

@@ -7,7 +7,7 @@ _res/
 
 # Python bytecode
 **/__pycache__/
-
+lightning_logs/
 
 # Graph database files
 data/
