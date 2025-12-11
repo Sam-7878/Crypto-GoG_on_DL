@@ -1,0 +1,12 @@
+batch_size: 256
+lr: 0.001
+max_epochs: 50
+model:
+  hidden: 64
+  latent: 32
+  node_dim: 10
+num_workers: 8
+test_data: GoG/edges/polygon/processed/test_data.pt
+train_data: GoG/edges/polygon/processed/train_data.pt
+val_data: GoG/edges/polygon/processed/val_data.pt
+weight_decay: 1.0e-05

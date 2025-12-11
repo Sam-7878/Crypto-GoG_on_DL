@@ -65,6 +65,9 @@ class GoGModel(pl.LightningModule):
 
     # ==================== 필수 메서드 ====================
     def training_step(self, batch, batch_idx):
+        print("batch type:", type(batch))
+        print("batch keys:", batch.keys)  # PyG Batch 면 .x, .edge_index, .y 등이 있음 
+               
         x, y = batch.x, batch.y
         logits = self(x)
         loss = F.cross_entropy(logits, y)
@@ -110,21 +113,28 @@ class GoGModel(pl.LightningModule):
         self.log("test_auc", self.test_auroc.compute())
         self.test_auroc.reset()
 
+
+    # ==================== 옵티마이저 설정 ====================
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(
             self.parameters(),
-            lr=self.lr,
-            weight_decay=self.weight_decay
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
         )
+
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="max", factor=0.5, patience=5, verbose=True
+            optimizer,
+            mode="max",
+            factor=0.5,
+            patience=5,
+            # verbose=True,  # ← 이 줄을 삭제하거나 주석 처리
         )
+
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": scheduler,
                 "monitor": "val_auc",
-                "interval": "epoch",
             },
         }
     # ====================================================

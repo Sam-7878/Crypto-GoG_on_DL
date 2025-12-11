@@ -76,8 +76,14 @@ def run_model(detector, data, seeds):
             return_conf=True
         )
         
-        auc_score = eval_roc_auc(data.y, score)
-        ap_score = average_precision_score(
+        # 기존 eval_roc_auc 사용 부분 주석 처리
+        # auc_score = eval_roc_auc(data.y, score)
+        auc_score = safe_auc(data.y, score)
+        # ap_score = average_precision_score(
+        #     data.y.cpu().numpy(),
+        #     score.cpu().numpy()
+        # )
+        ap_score = safe_ap(
             data.y.cpu().numpy(),
             score.cpu().numpy()
         )
@@ -106,25 +112,51 @@ def inspect_file(p):
 
 
 # training / validation / test 단계에서 라벨 분포를 출력해 보세요
-def print_label_stats(dataset, name):
-    # dataset 은 torch_geometric.data.Data 객체 혹은 (x, y) 튜플이라고 가정
-    if hasattr(dataset, "y"):
-        y = dataset.y
+# main.py 안의 함수 정의 부분
+import numpy as np
+from collections import Counter
+
+def print_label_stats(dataset, name: str):
+    """
+    dataset: [Data] 또는 Data
+    name: "train" / "val" / "test"
+    """
+    # 1) dataset 이 list/tuple이면 첫 번째 원소 꺼냄
+    if isinstance(dataset, (list, tuple)):
+        if len(dataset) == 0:
+            print(f"[{name}] dataset is empty.")
+            return
+        data = dataset[0]
     else:
-        _, y = dataset
-    uniq, cnt = torch.unique(y, return_counts=True)
-    print(f"[{name}] label distribution: {dict(zip(uniq.tolist(), cnt.tolist()))}")
+        # 단일 Data 인 경우
+        data = dataset
+
+    # 2) Data.y 에서 label 벡터 꺼내기
+    if not hasattr(data, "y") or data.y is None:
+        print(f"[{name}] Data.y is missing.")
+        return
+
+    y = data.y
+
+    # 3) 텐서를 1D numpy 배열로 변환
+    y_np = y.detach().cpu().numpy().reshape(-1)
+
+    # 4) 분포 계산
+    counter = Counter(y_np.tolist())
+    print(f"[{name}] label distribution: {dict(counter)}")
 
 
 from sklearn.metrics import roc_auc_score, average_precision_score
 import numpy as np
 
 def safe_auc(y_true, y_score):
+    y_true = np.asarray(y_true)
     if len(np.unique(y_true)) < 2:
         return np.nan
     return roc_auc_score(y_true, y_score)
 
 def safe_ap(y_true, y_score):
+    y_true = np.asarray(y_true)
     if len(np.unique(y_true)) < 2:
         return 0.0
     return average_precision_score(y_true, y_score)
